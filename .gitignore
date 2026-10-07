@@ -1,0 +1,3 @@
+# Local firmware configuration must also be ignored by the containing repository.
+config.h
+.DS_Store

@@ -1,0 +1,226 @@
+# Altoids Pet
+
+Working Arduino pet firmware for a Seeed Studio XIAO ESP32-S3 and an Adafruit
+SH1107 128 × 128 monochrome OLED. This first refactor separates responsibilities
+while preserving the prototype's UI, timings, networking, caching, and power
+behavior. The original `../testsketch` remains the reference.
+
+## Hardware and wiring
+
+Use the existing XIAO ESP32-S3, OLED, three momentary buttons, and a USB data
+cable for programming. Keep the prototype's power wiring.
+
+| Connection | XIAO pin | ESP32-S3 GPIO | Wiring |
+| --- | --- | --- | --- |
+| Button A | D0 | GPIO1 | Button between D0 and GND |
+| Button B / wake | D1 | GPIO2 | Button between D1 and GND |
+| Button C | D2 | GPIO3 | Button between D2 and GND |
+| OLED SDA | D4 | GPIO5 | OLED SDA to D4 |
+| OLED SCL | D5 | GPIO6 | OLED SCL to D5 |
+| OLED ground | GND | — | OLED GND to common ground |
+
+All buttons use `INPUT_PULLUP` and are pressed when LOW. The OLED remains at
+I2C address `0x3D`, with a 400 kHz bus. Keep its existing supply connection and
+any existing address configuration. No additional hardware is required.
+
+Pin mappings and board setup are documented in
+[Seeed's XIAO ESP32-S3 guide](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/).
+
+## Arduino requirements
+
+Keep the same board core version, library versions, and board options used by
+the working sketch for this first refactor. In Arduino IDE, the board is
+`XIAO_ESP32S3` in the **esp32 by Espressif Systems** board package.
+
+Required libraries, already used by the prototype:
+
+- **Adafruit GFX Library** (`Adafruit_GFX.h`).
+- **Adafruit SH110X** (`Adafruit_SH110X.h`).
+- **ArduinoJson**, using the existing `JsonDocument` API.
+
+Retain the dependencies already installed with those libraries. `Wire`, `WiFi`,
+`WiFiClientSecure`, `HTTPClient`, time/NTP, and deep-sleep/RTC support come from
+the ESP32 Arduino environment. Pet checkpoints use `Preferences`, also included
+with the ESP32 core; no separately installed libraries or frameworks were added.
+
+## Configuration
+
+From `altoids-pet/`, create the local settings file if it does not already exist:
+
+```sh
+cp firmware/altoids_pet/config.example.h firmware/altoids_pet/config.h
+```
+
+Edit **only `firmware/altoids_pet/config.h`** with your Wi-Fi name/password and approximate
+latitude/longitude. The example contains placeholder credentials and sample
+coordinates. Both Git ignore files exclude `config.h`, including copies in
+other sketch folders. Keep credentials out of `config.example.h` and the
+reference sketch.
+
+The local configuration retains the prototype defaults:
+
+| Setting | Default |
+| --- | --- |
+| Central timezone with automatic DST | `CST6CDT,M3.2.0/2,M11.1.0/2` |
+| Pet awake hours | 07:00 to before 22:00 |
+| Inactivity deep sleep | 30,000 ms |
+| Weather cache refresh threshold | 3 hours |
+| Home animation interval | 250 ms |
+
+## Build and upload
+
+1. Use the working sketch's Arduino IDE and installed ESP32 core. If setting up
+   another computer, install that same core and the libraries above. See the
+   linked Seeed guide for board-package installation.
+2. Open `firmware/altoids_pet/altoids_pet.ino` directly in Arduino IDE. The
+   sketch folder already matches the `.ino` filename, and all `.cpp` and `.h`
+   files are alongside it so Arduino compiles the modules together.
+3. Select **XIAO_ESP32S3**, preserve the prototype's other board options, and
+   select the board's USB port.
+4. Click **Verify**, then **Upload**. Open Serial Monitor at **115200 baud** to
+   see boot, time sync, weather, and sleep messages.
+5. If the USB port is unavailable or upload fails, use the board's BOOT/reset
+   procedure in the Seeed guide, select the newly appearing port, and retry.
+
+## Project structure
+
+```text
+altoids-pet/
+├── firmware/
+│   └── altoids_pet/
+│       ├── altoids_pet.ino
+│       ├── display.cpp / display.h
+│       ├── pet.cpp / pet.h
+│       ├── weather.cpp / weather.h
+│       ├── power.cpp / power.h
+│       ├── config.example.h
+│       └── config.h             # local, gitignored
+├── hardware/
+├── enclosure/
+├── assets/sprites/
+├── docs/
+├── README.md
+├── LICENSE
+└── .gitignore
+```
+
+- `altoids_pet.ino` coordinates initialization and each loop iteration in the
+  original order.
+- `display` owns the OLED, rendering, weather graphics, screen/menu state, and
+  the existing A/B/C menu actions.
+- `pet` owns pet drawing, reactions, the sleep schedule, blinking, and animation
+  state/updates, persistent mood/friendship, lifetime interactions, and birthday.
+- `weather` owns Wi-Fi/NTP sync, timezone, local clock and moon calculations,
+  Open-Meteo parsing, sunrise/sunset, weather mapping, and the RTC weather cache.
+- `power` owns button pins, polling/debounce, activity tracking, wake-cause
+  detection, and deep sleep.
+
+State is defined once in its owning module. Headers expose shared state and
+functions needed by the other modules. The cache fields and online sync
+timestamp retain `RTC_DATA_ATTR`. Graphics remain the original drawing commands;
+the other directories are reserved for project materials.
+
+## Preserved behavior
+
+Cold boot attempts Wi-Fi/NTP and Open-Meteo sync. Central timezone/DST is
+restored on every boot. On B-button wake, the firmware restores time and weather
+from RTC memory; it attempts an online refresh when the cache is missing or
+its valid sync timestamp is more than three hours old. The original timestamp
+checks and failure fallbacks remain intact. This is a wake-time cache check,
+not a new periodic online refresh.
+
+- A opens the menu from home and cycles its entries.
+- B reacts with the pet while awake, opens WEATHER from the menu, or logs the
+  selected TIMER, PET, or SETTINGS entry.
+- C returns from weather to the menu, or otherwise returns home.
+- Pet sleep remains from 22:00 until 07:00. Reaction duration, blinking,
+  weather animations, moon phases, sunrise/sunset, and screen drawing are
+  preserved.
+- Clock checks remain every five seconds while time is valid, with clock-driven
+  home redraws when the displayed minute changes.
+- After 30 seconds without an accepted button press, the OLED turns off and the
+  ESP32 enters deep sleep. B wakes it through EXT0 at a LOW level.
+
+## Persistent pet state
+
+The pet is a friendly companion. Friendship never decreases due to time away,
+and there are no neglect, hunger, sickness, or death mechanics. The state lives
+in `pet.cpp`; `getPetState()` exposes a read-only view for future use. It is not
+added to the OLED UI or menus in this implementation.
+
+- **Mood:** CALM by default while awake. An accepted home-screen B interaction
+  makes it EXCITED during the existing hop/heart reaction, then HAPPY until five
+  seconds after the interaction, then CALM. The existing 22:00–07:00 schedule
+  overrides this with SLEEPY. CURIOUS is available for future behavior.
+- **Friendship:** starts at 0, capped at 100. The first successful interaction
+  earns one point; subsequent points require ten minutes between awards.
+  Rapid presses still count as interactions, but do not earn extra friendship.
+- **Interactions:** a lifetime 64-bit count of accepted B interactions on HOME
+  while the pet is awake. Menu actions, sleeping-pet presses, and wake itself
+  do not increment it. Existing debounce and held-button behavior remain intact.
+- **Birthday:** Unix creation time, set once using the existing valid clock.
+  If the pet starts offline without valid time, it remains 0 (unknown) until
+  that clock becomes valid. It then records the first available valid time;
+  the firmware does not invent an earlier date or change time synchronization.
+
+RTC memory retains every state change across deep sleep, including friendship
+and checkpoint cooldowns. With valid time, elapsed sleep/offline time counts
+against cooldowns; without valid time, only awake `millis()` counts. Inactivity
+never awards points automatically and never removes them. Temporary interaction
+moods settle to CALM or SLEEPY on boot, according to the sleep schedule.
+
+A versioned record is stored using the ESP32 core's
+[Preferences/NVS API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/preferences.html)
+in namespace `altoids-pet`, key `state`. It is restored on ordinary reboot or
+power-up; a valid deep-sleep RTC record takes priority. Record size, version,
+and basic bounds are validated before restoration.
+
+NVS writes occur on first initialization, when an unknown birthday first
+becomes known, and subsequently only for changed progress at most once per ten
+minutes. Mood changes alone do not trigger writes. The loop and sleep hook
+check for an eligible checkpoint; sleep never forces a write inside the
+cooldown. Failed storage operations retain the RTC state and retry after the
+same cooldown instead of writing on every loop or blocking sleep.
+
+**Power-loss tradeoff:** removing power or rebooting restores the most recent
+NVS checkpoint. Interactions/friendship earned since that checkpoint can be
+lost. Deep sleep retains them in RTC immediately. Cooldowns and dirty state
+also survive deep sleep, so repeatedly waking does not force flash writes.
+
+Serial Monitor reports friendship, interaction count, and birthday at startup,
+progress on successful interaction, and checkpoint results. Mood is currently
+internal state, accessible through `getPetState()`.
+
+## Validation
+
+The original refactor was verified against `testsketch`. For the pet state
+addition, checks confirm that weather/time code, graphics, blinking, animation,
+and the original button/sleep implementations remain intact except for the
+explicit pet hooks. Host tests using temporary ESP32 API/storage stubs exercise
+accepted/rejected interactions, temporary moods, sleep schedule boundaries,
+friendship limits, RTC wake, NVS restoration and write throttling, failed
+storage, counter saturation, and deferred birthday capture. A full module
+compile/link check uses the same stubs. Real board compilation and hardware
+tests still need the existing Arduino environment.
+
+On the physical device:
+
+1. Compile/upload with the existing board options and library versions. Keep
+   the existing NVS partition; erasing flash erases pet checkpoints.
+2. On HOME during awake hours, press B and verify the same hop/heart, plus one
+   counted interaction in Serial Monitor. Rapid presses should count but award
+   only one friendship point in ten minutes. Menus should remain unchanged.
+3. Wait for the normal 30-second sleep, wake with B, and check startup progress
+   is retained. Verify rapid sleep/wake does not bypass friendship cooldown.
+4. Interact after ten minutes and confirm one more friendship point. Look for
+   a checkpoint message, then remove/reconnect power: checkpointed progress and
+   birthday should restore. Uncheckpointed progress may roll back.
+5. Check 07:00 and 22:00 behavior: sleeping B presses should not react or count.
+   Verify the same clock, sunrise/sunset, weather/moon graphics, blinking,
+   animations, Wi-Fi behavior, cached-weather wake, and stale-cache refresh.
+6. If starting with no valid clock, confirm birthday is initially 0 and is
+   captured once after the normal clock becomes valid. No added sync is attempted.
+
+## License
+
+A license has not yet been selected; see `LICENSE`.
