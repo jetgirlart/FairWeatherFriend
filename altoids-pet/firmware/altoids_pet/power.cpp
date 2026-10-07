@@ -3,6 +3,7 @@
 #include "display.h"
 #include "pet.h"
 #include <esp_sleep.h>
+#include <driver/rtc_io.h>
 
 // ==================================================
 // BUTTONS
@@ -64,42 +65,52 @@ bool pressed(
 // ==================================================
 
 void goToSleep() {
+  // EXT0 is level-triggered: entering sleep with B already LOW wakes instantly.
+  // Defer before switching off the OLED, even if the button is held/stuck LOW.
+  if (digitalRead(BUTTON_B) == LOW) {
+    Serial.println("Sleep deferred: B is LOW; release B to allow sleep.");
+    lastActivityTime = millis();
+    return;
+  }
 
-  Serial.println(
-    "Going to sleep..."
-  );
+  gpio_num_t wakePin = static_cast<gpio_num_t>(BUTTON_B);
+  esp_err_t result = rtc_gpio_init(wakePin);
+  if (result == ESP_OK) result = rtc_gpio_set_direction(wakePin, RTC_GPIO_MODE_INPUT_ONLY);
+  if (result == ESP_OK) result = rtc_gpio_pulldown_dis(wakePin);
+  if (result == ESP_OK) result = rtc_gpio_pullup_en(wakePin);
+  if (result == ESP_OK) result = esp_sleep_enable_ext0_wakeup(wakePin, 0);
+  if (result != ESP_OK) {
+    rtc_gpio_deinit(wakePin);
+    pinMode(BUTTON_B, INPUT_PULLUP);
+    Serial.printf("Sleep deferred: RTC wake setup failed (%d).\n", static_cast<int>(result));
+    lastActivityTime = millis();
+    return;
+  }
 
+  // Use the existing first 100 ms pause to settle the RTC pull-up and check
+  // again before blanking the display. A button/noise during setup stays awake.
+  delay(100);
+  if (rtc_gpio_get_level(wakePin) == LOW) {
+    rtc_gpio_deinit(wakePin);
+    pinMode(BUTTON_B, INPUT_PULLUP);
+    Serial.println("Sleep deferred: RTC B input is LOW.");
+    lastActivityTime = millis();
+    return;
+  }
+
+  Serial.println("Going to sleep... B wake input HIGH.");
   checkpointPetState(true);
 
-  // OLED completely off.
-
-  display.oled_command(
-    SH110X_DISPLAYOFF
-  );
-
-  delay(
-    100
-  );
-
-  // B button wakes the ESP32.
-
-  esp_sleep_enable_ext0_wakeup(
-    (gpio_num_t)BUTTON_B,
-    0
-  );
-
-  Serial.println(
-    "Press B to wake."
-  );
-
-  delay(
-    100
-  );
-
+  display.oled_command(SH110X_DISPLAYOFF);
+  Serial.println("Press B to wake.");
+  delay(100);
   esp_deep_sleep_start();
 }
 
 void initializeButtons() {
+  // EXT0 leaves B routed through RTC IO. Restore normal digital reads first.
+  rtc_gpio_deinit(static_cast<gpio_num_t>(BUTTON_B));
+
   // Buttons.
 
   pinMode(

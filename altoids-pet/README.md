@@ -19,7 +19,16 @@ cable for programming. Keep the prototype's power wiring.
 | OLED SCL | D5 | GPIO6 | OLED SCL to D5 |
 | OLED ground | GND | — | OLED GND to common ground |
 
-All buttons use `INPUT_PULLUP` and are pressed when LOW. The OLED remains at
+All buttons use `INPUT_PULLUP` and are pressed when LOW. Before deep sleep,
+B is explicitly configured as an RTC input with its pull-up enabled and
+pull-down disabled. On boot it is returned to digital GPIO mode before button
+initialization. EXT0 remains B-only and LOW-triggered. If B reads LOW before
+sleep (including after RTC setup), the OLED stays on and sleep is deferred for
+another 30 seconds; a setup error also defers sleep and is logged. This prevents
+entering sleep with the wake condition already asserted. See
+[ESP32-S3 EXT0 sleep guidance](https://docs.espressif.com/projects/esp-idf/en/release-v5.4/esp32s3/api-reference/system/sleep_modes.html).
+
+The OLED remains at
 I2C address `0x3D`, with a 400 kHz bus. Keep its existing supply connection and
 any existing address configuration. No additional hardware is required.
 
