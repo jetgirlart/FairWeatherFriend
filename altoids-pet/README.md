@@ -288,9 +288,61 @@ unchanged. CURIOUS/EXCITED/SLEEPY-awake profiles are covered by host tests; seei
 all of them on hardware would require a temporary diagnostic build, since the
 current mood lifecycle does not hold those awake moods for long.
 
+## Occasional weather reactions
+
+Weather reactions share the existing idle state machine and 250 ms frame
+scheduler. They use the current weather state and existing `isDaylight()` result,
+without fetching weather, changing time, assigning moods, or saving pet progress.
+
+| Existing weather | Reaction | Duration |
+| --- | --- | --- |
+| CLEAR / MAINLY CLEAR, daytime | Small 1 → 2 → 1 pixel happy bounce | 750 ms |
+| CLEAR / MAINLY CLEAR, night | Eyes look upward/right toward sky | 1 second |
+| RAIN | Chunky umbrella beside pet, tiny canopy bob | 1.5 seconds |
+| SNOW | Scarf and four alternating 1-pixel shiver steps | 1 second |
+| STORM | Closed-eye crouch, head 3 pixels lower, feet stay grounded | 1 second |
+| FOG | Look left, then right | 1.5 seconds |
+| CLOUDY / PARTLY CLOUDY / UNKNOWN | Ordinary mood/idle behavior | No extra reaction |
+
+The first weather opportunity occurs 12–22 seconds after awake HOME idle resumes.
+After completion, another opportunity waits 25–45 seconds. Blinks take priority,
+and an active idle action finishes before a weather action starts. Weather actions
+also finish before another idle action starts. Existing mood-based idle choices
+remain available between reactions. With a 30-second inactivity timeout, some
+sessions may sleep before a weather opportunity can run; reactions are intentionally
+occasional.
+
+B's hop/heart, sleep, menu navigation, and C's existing reset suppress/cancel
+weather reactions. A reaction is suppressed immediately and canceled on the next
+frame if weather validity, weather state, or daylight changes. Props are drawn
+inside `drawPet()` below the header and above the ground/temperature text. The
+same complete RAM framebuffer and partial OLED transfer are used: no extra display
+pushes, blank frames, delays, libraries, menus, or settings.
+
+Hardware checks:
+
+1. During awake HOME sessions, watch 20–25 seconds for the reaction matching
+   current weather. Repeat sessions if normal blinks/idle actions postpone it.
+2. Check sunny bounce, clear-night upward eyes before the 22:00 sleep hour,
+   rain umbrella, snow scarf/shiver, storm crouch, and fog left/right glance.
+   Cloudy/partly cloudy should keep the ordinary calm idle behavior. To exercise
+   unavailable weather locally, a temporary diagnostic build can override only
+   `weatherState`/`weatherValid` in RAM after normal weather initialization;
+   no production override or settings menu was added.
+3. Press B during a weather action: verify the same hop/heart, one interaction,
+   and no remaining prop. Check C/menu return, sleeping closed-eye pose, normal
+   30-second sleep, and B wake. No awake reaction should run while sleeping.
+4. Verify the umbrella/scarf/crouch leave no trails or overlap clock, weather
+   icon, temperature, or label. Watch weather effects, idle blinking, and minute
+   changes for flicker. Reaction-only sessions should add no interactions,
+   friendship gains, or NVS saves.
+
 ## Validation
 
-The original refactor was verified against `testsketch`. Idle host tests cover
+The original refactor was verified against `testsketch`. Weather-reaction host
+tests cover all poses/durations, neutral weather, sleep/menu/B/C priority,
+weather/daylight cancellation, idle/blink coexistence, no reaction NVS writes,
+and one framebuffer push. Idle host tests cover
 visible blink phases, expression geometry, mood-weighted choice, frame gating,
 sleep/menu/B priority, delayed loop steps, rollover deadlines, no NVS writes,
 and one complete OLED push per frame. For the pet state

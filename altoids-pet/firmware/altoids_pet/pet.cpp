@@ -346,7 +346,13 @@ enum class IdleAction : uint8_t {
   LOOK_LEFT,
   LOOK_RIGHT,
   BOUNCE,
-  EAR_TWITCH
+  EAR_TWITCH,
+  SUNNY_BOUNCE,
+  LOOK_UP,
+  UMBRELLA,
+  SNOW_SHIVER,
+  STORM_CROUCH,
+  FOG_LOOK
 };
 
 struct IdleTiming {
@@ -360,6 +366,9 @@ IdleAction idleAction = IdleAction::REST;
 uint8_t idleStep = 0;
 unsigned long idleStepStarted = 0;
 unsigned long nextIdleTime = 0;
+unsigned long nextWeatherTime = 0;
+WeatherState reactionWeather = WEATHER_UNKNOWN;
+bool reactionDaylight = true;
 unsigned long idleBlinkDeadline = 3500;
 PetMood idleMood = PetMood::CALM;
 bool idlePaused = true;
@@ -430,6 +439,35 @@ IdleAction chooseIdle() {
   }
 }
 
+bool isWeatherAction(IdleAction action) {
+  return action >= IdleAction::SUNNY_BOUNCE;
+}
+
+void scheduleWeather(unsigned long now, bool first = false) {
+  // A first opportunity fits into a normal 30-second awake session. Later
+  // reactions are deliberately rarer, even if the user keeps the pet awake.
+  nextWeatherTime = now + (first ? 12000 : 25000) + varyIdle() % (first ? 10001 : 20001);
+}
+
+IdleAction chooseWeatherReaction() {
+  if (!weatherValid) return IdleAction::REST;
+  switch (weatherState) {
+    case WEATHER_CLEAR:
+    case WEATHER_MAINLY_CLEAR:
+      return isDaylight() ? IdleAction::SUNNY_BOUNCE : IdleAction::LOOK_UP;
+    case WEATHER_RAIN: return IdleAction::UMBRELLA;
+    case WEATHER_SNOW: return IdleAction::SNOW_SHIVER;
+    case WEATHER_STORM: return IdleAction::STORM_CROUCH;
+    case WEATHER_FOG: return IdleAction::FOG_LOOK;
+    default: return IdleAction::REST; // Cloudy, partly cloudy, or unknown: ordinary idle.
+  }
+}
+
+bool weatherReactionVisible() {
+  return weatherValid && weatherState == reactionWeather &&
+         isDaylight() == reactionDaylight;
+}
+
 void pauseIdle() {
   idleAction = IdleAction::REST;
   idleStep = 0;
@@ -442,6 +480,9 @@ unsigned long idleStepDuration() {
   if (idleAction == IdleAction::LOOK_LEFT || idleAction == IdleAction::LOOK_RIGHT) {
     return 1000;
   }
+  if (idleAction == IdleAction::LOOK_UP) return 1000;
+  if (idleAction == IdleAction::UMBRELLA || idleAction == IdleAction::STORM_CROUCH) return 500;
+  if (idleAction == IdleAction::FOG_LOOK) return 750;
   if (idleAction == IdleAction::BLINK && idleMood == PetMood::SLEEPY) return 500;
   return 250;
 }
@@ -451,6 +492,11 @@ uint8_t idleStepCount() {
     case IdleAction::DOUBLE_BLINK: return 3; // shut, open, shut
     case IdleAction::BOUNCE: return 3;       // up 1, up 2, up 1
     case IdleAction::EAR_TWITCH: return 2;   // tip shifts 1 pixel, then 2
+    case IdleAction::SUNNY_BOUNCE: return 3;
+    case IdleAction::UMBRELLA: return 3;
+    case IdleAction::SNOW_SHIVER: return 4;
+    case IdleAction::STORM_CROUCH: return 2;
+    case IdleAction::FOG_LOOK: return 2;
     default: return 1;
   }
 }
@@ -473,12 +519,22 @@ void drawPet(
 
   // Keep the B hop and sleeping pose authoritative, even on immediate redraws.
   bool expressIdle = !sleeping && idleVisible() && nextBlinkTime == idleBlinkDeadline;
+  // A weather/daylight change suppresses an obsolete reaction immediately.
+  if (isWeatherAction(idleAction) && !weatherReactionVisible()) expressIdle = false;
+  bool crouching = expressIdle && idleAction == IdleAction::STORM_CROUCH;
   int lookOffset = 0;
+  int lookUp = 0;
   int earOffset = 0;
   if (expressIdle) {
     if (idleAction == IdleAction::LOOK_LEFT) lookOffset = -2;
     if (idleAction == IdleAction::LOOK_RIGHT) lookOffset = 2;
-    if (idleAction == IdleAction::BOUNCE) y -= idleStep == 1 ? 2 : 1;
+    if (idleAction == IdleAction::BOUNCE || idleAction == IdleAction::SUNNY_BOUNCE) {
+      y -= idleStep == 1 ? 2 : 1;
+    }
+    if (idleAction == IdleAction::LOOK_UP) { lookUp = -2; lookOffset = 1; }
+    if (idleAction == IdleAction::FOG_LOOK) lookOffset = idleStep == 0 ? -2 : 2;
+    if (idleAction == IdleAction::SNOW_SHIVER) x += idleStep % 2 == 0 ? -1 : 1;
+    if (crouching) { y += 3; eyesClosed = true; }
     if (idleAction == IdleAction::EAR_TWITCH) earOffset = idleStep + 1;
   }
 
@@ -532,14 +588,14 @@ void drawPet(
 
     display.fillCircle(
       x + 16 + lookOffset,
-      y + 24,
+      y + 24 + lookUp,
       2,
       SH110X_WHITE
     );
 
     display.fillCircle(
       x + 32 + lookOffset,
-      y + 24,
+      y + 24 + lookUp,
       2,
       SH110X_WHITE
     );
@@ -560,7 +616,7 @@ void drawPet(
     x + 13,
     y + 39,
     22,
-    22,
+    crouching ? 19 : 22,
     7,
     SH110X_WHITE
   );
@@ -568,16 +624,30 @@ void drawPet(
   // feet
 
   display.drawLine(
-    x + 16, y + 60,
-    x + 12, y + 64,
+    x + 16, y + (crouching ? 57 : 60),
+    x + 12, y + (crouching ? 61 : 64),
     SH110X_WHITE
   );
 
   display.drawLine(
-    x + 32, y + 60,
-    x + 36, y + 64,
+    x + 32, y + (crouching ? 57 : 60),
+    x + 36, y + (crouching ? 61 : 64),
     SH110X_WHITE
   );
+
+  if (expressIdle && idleAction == IdleAction::UMBRELLA) {
+    // Chunky canopy beside the pet, entirely below the clock/weather header.
+    int umbrellaY = y + (idleStep == 1 ? 1 : 0);
+    display.fillTriangle(x + 40, umbrellaY + 14, x + 52, umbrellaY + 5,
+                         x + 64, umbrellaY + 14, SH110X_WHITE);
+    display.drawLine(x + 52, umbrellaY + 14, x + 52, umbrellaY + 32, SH110X_WHITE);
+    display.drawLine(x + 52, umbrellaY + 32, x + 48, umbrellaY + 32, SH110X_WHITE);
+  }
+  if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) {
+    display.fillRect(x + 9, y + 36, 30, 3, SH110X_WHITE);
+    display.fillRect(x + 32, y + 39, 3, 7, SH110X_WHITE);
+  }
+
 }
 
 // ==================================================
@@ -631,6 +701,7 @@ void updateBlink() {
   unsigned long now = millis();
   PetMood mood = getPetState().mood;
   if (idlePaused || mood != idleMood) {
+    if (idlePaused) scheduleWeather(now, true);
     idleMood = mood;
     scheduleIdle(now);
     // Keep the existing first/return-home blink deadline. Mood transitions
@@ -639,22 +710,37 @@ void updateBlink() {
     idlePaused = false;
   }
 
+  if (isWeatherAction(idleAction) && !weatherReactionVisible()) {
+    idleAction = IdleAction::REST;
+    idleStep = 0;
+    scheduleWeather(now);
+  }
+
   if (idleAction != IdleAction::REST) {
     if (now - idleStepStarted >= idleStepDuration()) {
       idleStepStarted = now;
       if (++idleStep >= idleStepCount()) {
         bool wasBlink = idleAction == IdleAction::BLINK || idleAction == IdleAction::DOUBLE_BLINK;
         bool wasIdleAction = idleAction != IdleAction::BLINK;
+        bool wasWeather = isWeatherAction(idleAction);
         idleAction = IdleAction::REST;
         idleStep = 0;
         if (wasBlink) scheduleBlink(now);
         if (wasIdleAction) scheduleIdle(now);
+        if (wasWeather) scheduleWeather(now);
       }
     }
   } else {
     IdleAction action = IdleAction::REST;
     if (idleDue(now, nextBlinkTime)) {
       action = IdleAction::BLINK;
+    } else if (idleDue(now, nextWeatherTime)) {
+      action = chooseWeatherReaction();
+      if (action == IdleAction::REST) scheduleWeather(now);
+      else {
+        reactionWeather = weatherState;
+        reactionDaylight = isDaylight();
+      }
     } else if (idleDue(now, nextIdleTime)) {
       action = chooseIdle();
       if (action == IdleAction::REST) scheduleIdle(now);
