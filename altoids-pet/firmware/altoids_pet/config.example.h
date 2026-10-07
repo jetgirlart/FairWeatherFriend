@@ -31,3 +31,8 @@ const unsigned long WEATHER_REFRESH_SECONDS =
 
 // Home-screen animation speed.
 const unsigned long ANIMATION_INTERVAL_MS = 250;
+
+// Optional small passive piezo: D3 (GPIO4) -> 220 ohm -> piezo +; piezo - -> GND.
+#define PIEZO_PIN D3
+#define SOUND_ENABLED true
+#define SOUND_STARTUP_CHIRP false

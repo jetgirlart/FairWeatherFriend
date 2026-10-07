@@ -3,6 +3,7 @@
 #include "display.h"
 #include "pet.h"
 #include "timer.h"
+#include "sound.h"
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
@@ -102,6 +103,7 @@ void goToSleep() {
   Serial.println("Going to sleep... B wake input HIGH.");
   checkpointPetState(true);
 
+  stopSound();
   display.oled_command(SH110X_DISPLAYOFF);
   Serial.println("Press B to wake.");
   delay(100);

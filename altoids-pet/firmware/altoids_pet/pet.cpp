@@ -2,6 +2,8 @@
 #include "config.h"
 #include "display.h"
 #include "weather.h"
+#include "sound.h"
+#include "sprites.h"
 #include <Preferences.h>
 #include <esp_attr.h>
 #include <esp_sleep.h>
@@ -334,6 +336,7 @@ bool interactWithPet() {
   Serial.printf("Pet interaction: friendship %u, interactions %llu\n",
                 static_cast<unsigned>(petRecord.state.friendship),
                 static_cast<unsigned long long>(petRecord.state.interactions));
+  soundPetInteraction();
   return true;
 }
 
@@ -538,102 +541,34 @@ void drawPet(
     if (idleAction == IdleAction::EAR_TWITCH) earOffset = idleStep + 1;
   }
 
-  // ears
-
-  display.drawTriangle(
-    x + 6, y + 12,
-    x + 14 + earOffset, y,
-    x + 20, y + 14,
-    SH110X_WHITE
-  );
-
-  display.drawTriangle(
-    x + 28, y + 14,
-    x + 34, y,
-    x + 42, y + 12,
-    SH110X_WHITE
-  );
-
-  // head
-
-  display.drawRoundRect(
-    x + 5,
-    y + 10,
-    38,
-    30,
-    8,
-    SH110X_WHITE
-  );
-
-  // eyes
-
-  if (
-    sleeping ||
-    eyesClosed
-  ) {
-
-    display.drawLine(
-      x + 13, y + 24,
-      x + 19, y + 24,
-      SH110X_WHITE
-    );
-
-    display.drawLine(
-      x + 29, y + 24,
-      x + 35, y + 24,
-      SH110X_WHITE
-    );
-
-  } else {
-
-    display.fillCircle(
-      x + 16 + lookOffset,
-      y + 24 + lookUp,
-      2,
-      SH110X_WHITE
-    );
-
-    display.fillCircle(
-      x + 32 + lookOffset,
-      y + 24 + lookUp,
-      2,
-      SH110X_WHITE
-    );
+  // Artwork selection is independent of the existing timing/state machine.
+  const uint8_t *sprite = KITSUNE_IDLE;
+  if (currentScreen != FOCUS_SCREEN) {
+    switch (getPetState().mood) {
+      case PetMood::HAPPY: sprite = KITSUNE_HAPPY; break;
+      case PetMood::EXCITED: sprite = KITSUNE_EXCITED; break;
+      case PetMood::SLEEPY: sprite = KITSUNE_SLEEPY; break;
+      case PetMood::CALM:
+      case PetMood::CURIOUS: break; // Curious looks remain occasional actions.
+    }
   }
+  if (currentScreen == TIMER_DONE) sprite = KITSUNE_HAPPY;
+  if (petReacting) sprite = KITSUNE_EXCITED;
+  if (expressIdle) {
+    if (lookOffset < 0) sprite = KITSUNE_LOOK_LEFT;
+    if (lookOffset > 0) sprite = KITSUNE_LOOK_RIGHT;
+    if (lookUp < 0) sprite = KITSUNE_LOOK_UP;
+    if (idleAction == IdleAction::BOUNCE || idleAction == IdleAction::SUNNY_BOUNCE) {
+      sprite = KITSUNE_BOUNCE;
+    }
+  }
+  // Blinks and the authoritative night-time sleep pose override expressions.
+  if (eyesClosed) sprite = KITSUNE_BLINK;
+  if (sleeping) sprite = KITSUNE_SLEEP;
 
-  // nose
-
-  display.fillCircle(
-    x + 24,
-    y + 29,
-    1,
-    SH110X_WHITE
-  );
-
-  // body
-
-  display.drawRoundRect(
-    x + 13,
-    y + 39,
-    22,
-    crouching ? 19 : 22,
-    7,
-    SH110X_WHITE
-  );
-
-  // feet
-
-  display.drawLine(
-    x + 16, y + (crouching ? 57 : 60),
-    x + 12, y + (crouching ? 61 : 64),
-    SH110X_WHITE
-  );
-
-  display.drawLine(
-    x + 32, y + (crouching ? 57 : 60),
-    x + 36, y + (crouching ? 61 : 64),
-    SH110X_WHITE
-  );
+  // 48x48 presentation inside the old 48x64 anchor preserves the feet baseline
+  // and existing B hop, focus book, heart, and DONE bounce coordinates.
+  drawKitsuneSprite(sprite, x, y + 16, earOffset, crouching);
 
   if (expressIdle && idleAction == IdleAction::UMBRELLA) {
     // Chunky canopy beside the pet, entirely below the clock/weather header.
@@ -644,8 +579,8 @@ void drawPet(
     display.drawLine(x + 52, umbrellaY + 32, x + 48, umbrellaY + 32, SH110X_WHITE);
   }
   if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) {
-    display.fillRect(x + 9, y + 36, 30, 3, SH110X_WHITE);
-    display.fillRect(x + 32, y + 39, 3, 7, SH110X_WHITE);
+    display.fillRect(x + 8, y + 44, 24, 3, SH110X_WHITE);
+    display.fillRect(x + 28, y + 47, 3, 7, SH110X_WHITE);
   }
 
 }

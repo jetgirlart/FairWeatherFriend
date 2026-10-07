@@ -2320,7 +2320,7 @@ void setup() {
 
   configureTimezone();
 
-  // OLED I2C.
+  // OLED I2C
 
   Wire.begin(
     D4,

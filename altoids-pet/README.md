@@ -15,6 +15,7 @@ cable for programming. Keep the prototype's power wiring.
 | Button A | D0 | GPIO1 | Button between D0 and GND |
 | Button B / wake | D1 | GPIO2 | Button between D1 and GND |
 | Button C | D2 | GPIO3 | Button between D2 and GND |
+| Optional piezo | D3 | GPIO4 | D3 → 220 Ω → piezo +; piezo − to GND |
 | OLED SDA | D4 | GPIO5 | OLED SDA to D4 |
 | OLED SCL | D5 | GPIO6 | OLED SCL to D5 |
 | OLED ground | GND | — | OLED GND to common ground |
@@ -100,9 +101,11 @@ altoids-pet/
 │       ├── altoids_pet.ino
 │       ├── display.cpp / display.h
 │       ├── pet.cpp / pet.h
+│       ├── sprites.cpp / sprites.h
 │       ├── weather.cpp / weather.h
 │       ├── power.cpp / power.h
 │       ├── timer.cpp / timer.h
+│       ├── sound.cpp / sound.h
 │       ├── config.example.h
 │       └── config.h             # local, gitignored
 ├── hardware/
@@ -120,6 +123,7 @@ altoids-pet/
   the existing A/B/C menu actions.
 - `pet` owns pet drawing, reactions, the sleep schedule, blinking, and animation
   state/updates, persistent mood/friendship, lifetime interactions, and birthday.
+- `sprites` owns the original 24×24 kitsune bitmaps and their crisp 2× rendering.
 - `weather` owns Wi-Fi/NTP sync, timezone, local clock and moon calculations,
   Open-Meteo parsing, sunrise/sunset, weather mapping, and the RTC weather cache.
 - `power` owns button pins, polling/debounce, activity tracking, wake-cause
@@ -127,11 +131,14 @@ altoids-pet/
   is actively counting down.
 - `timer` owns focus presets, monotonic countdown, RTC resume, completion,
   and timer-screen button actions.
+- `sound` owns optional passive-piezo cues, non-blocking tone timing, rate
+  limiting, sleep suppression, and output shutdown.
 
 State is defined once in its owning module. Headers expose shared state and
 functions needed by the other modules. The cache fields and online sync
-timestamp retain `RTC_DATA_ATTR`. Graphics remain the original drawing commands;
-the other directories are reserved for project materials.
+timestamp retain `RTC_DATA_ATTR`. The pet uses bitmap artwork; existing UI and
+accessory graphics retain their drawing commands. The other directories are
+reserved for project materials.
 
 ## Preserved behavior
 
@@ -365,7 +372,8 @@ the countdown is running. No new wake source or alarm is added. When it finishes
 DONE appears with a short 1.5-second bounce/heart celebration for an awake pet.
 Completion grants a fresh 30-second DONE viewing window, then normal inactivity
 sleep applies. B in focus/DONE does not interact with the pet or restart the timer.
-The timer adds no sound, vibration, progress rewards, or NVS writes.
+The timer adds no vibration, progress rewards, or NVS writes. Its optional
+completion cue is handled by the separate sound module.
 
 `timer.cpp` keeps a separate magic/version/checksum-validated RTC record marked
 `RTC_NOINIT_ATTR`; this avoids startup reinitialization on supported warm resets
@@ -411,7 +419,160 @@ Physical-device checklist:
    check weather/time, menu navigation, pet counts/birthday, cache use, and B wake
    afterward. Timer use alone must not change pet progress.
 
+## Optional passive piezo sound
+
+Use a small **passive piezo buzzer/element**, driven from the unused XIAO **D3
+(GPIO4)**. This is a two-terminal piezo connection, not a powered speaker module.
+
+```text
+XIAO D3 (GPIO4) ── 220 Ω resistor ── piezo +
+XIAO GND ────────────────────────── piezo −
+```
+
+If the element has no polarity marks, connect one terminal through the resistor
+and the other to GND. It needs no separate 3V3/5V supply. Buttons stay on D0/D1/D2
+and OLED I2C stays on D4/D5. The resistor limits current spikes; volume depends on
+the piezo's resonance and mounting. Sound remains optional: leaving the piezo
+unconnected does not affect firmware behavior.
+
+`config.example.h` provides:
+
+```cpp
+#define PIEZO_PIN D3
+#define SOUND_ENABLED true
+#define SOUND_STARTUP_CHIRP false
+```
+
+For an existing private `config.h`, append these settings there to customize
+sound without replacing credentials or other settings. Older configs also work:
+`sound.cpp` supplies these defaults if they are absent. Set `SOUND_ENABLED false`
+for global silence; set `SOUND_STARTUP_CHIRP true` for the optional startup/wake
+chirp. There is no settings menu or persisted sound preference.
+
+| Event | Cue | Policy |
+| --- | --- | --- |
+| Successful awake HOME B interaction | 2400 Hz, 55 ms | At most one chirp per second; all accepted interactions still count |
+| Timer finishes | 2000 Hz, 90 ms; 60 ms silent gap; 2600 Hz, 120 ms | Once at completion, including during pet sleep hours |
+| Startup / B wake | 1600 Hz, 35 ms | Optional, default OFF; silent while pet sleeps |
+
+Timer completion takes priority over other cues, which cannot interrupt it.
+Other cues stop if the pet enters sleep hours. Cues do not queue into melodies,
+and failed PWM setup disables sound for that boot. Timer/interaction chirps
+are scheduled at their existing events without altering pet progress or timer
+state. Resuming an expired RUNNING timer emits completion once; restoring an
+already DONE timer does not replay it.
+
+The module uses the installed Arduino-ESP32 3.x LEDC API (verified with core
+3.3.12); no new library is needed. Hardware generates the tone while the main
+loop remains free. `updateSound()` advances short steps using rollover-safe
+`millis()` deltas, with no animation delays. PWM detaches and the piezo output
+returns LOW between cues and immediately before actual deep sleep. Sleep is
+never delayed to finish a sound. Display transfers, Wi-Fi, clock, weather,
+RTC/NVS progress, button controls, and the RTC B wake setup are unchanged.
+
+Physical sound checklist:
+
+1. Wire the passive piezo as above, upload with the existing board options, and
+   confirm one short chirp on an awake HOME B interaction with the same hop/heart.
+2. Press B rapidly: sounds should be rate-limited, while accepted interaction
+   counts and controls retain their existing behavior. Menu/setup button presses
+   should be silent.
+3. Run a 5-minute timer to DONE: hear two brief tones separated by a short gap.
+   Test completion during sleep hours too; this is the only night-time cue.
+4. During pet sleep hours, B/startup/wake should be silent. With startup chirp
+   enabled temporarily, verify awake cold boot and B wake chirp once.
+5. Set `SOUND_ENABLED false`, rebuild, and verify all cues are silent. Restore
+   `true` afterward if desired.
+6. Check the normal 30-second sleep leaves the buzzer silent, B wake stays stable,
+   and countdown, idle/weather poses, clock updates, and partial OLED updates
+   remain responsive and flicker-free. Verify pet counts/birthday and weather
+   caching behave as before.
+
+## Kitsune sprite artwork
+
+The permanent pet is an original outline-oriented monochrome kitsune with large
+pointed ears, a compact body, little feet, and a curled tail. `sprites.cpp` holds
+the PROGMEM assets; `sprites.h` declares the names and dimensions. Every sprite
+contains 72 bytes: 24 rows of three bytes, with the leftmost pixel in each byte's
+most significant bit. `1` is white, `0` is transparent over the framebuffer.
+The row comments show the artwork using `#` and `.`.
+
+The source art is **24×24**, presented at an integer **2× scale (48×48)** on the
+OLED. A temporary 288-byte RAM bitmap is expanded without smoothing and passed
+to Adafruit_GFX's `drawBitmap()` RAM overload. It composes into the existing
+framebuffer without clearing it or transferring to the OLED. The sprite is
+positioned 16 pixels down inside the previous pet anchor to retain the feet
+baseline and existing home, interaction, focus, and DONE placements.
+
+| Mood / action | Bitmap |
+| --- | --- |
+| CALM, CURIOUS at rest; quiet focus pose | `KITSUNE_IDLE` |
+| HAPPY / EXCITED / SLEEPY while awake | `KITSUNE_HAPPY` / `KITSUNE_EXCITED` / `KITSUNE_SLEEPY` |
+| B interaction | `KITSUNE_EXCITED`, with the existing hop and heart |
+| Blink / double-blink closed phases | `KITSUNE_BLINK` |
+| Left / right idle look and fog look | `KITSUNE_LOOK_LEFT` / `KITSUNE_LOOK_RIGHT` |
+| Idle or sunny bounce | `KITSUNE_BOUNCE`, with the existing 1–2 pixel offset |
+| Clear-night upward look | `KITSUNE_LOOK_UP` (additional weather expression) |
+| Ear twitch | Current bitmap, with its upper-left ear tip shifted 1 then 2 OLED pixels |
+| Storm crouch | `KITSUNE_BLINK`, torso shortened three OLED rows with the existing +3 y offset |
+| DONE while awake | `KITSUNE_HAPPY`, with the existing brief bounce/heart |
+| Authoritative sleep hours | `KITSUNE_SLEEP`, overriding all awake expressions |
+
+Rain and snow keep the umbrella and scarf as separate overlays. Snow retains
+the existing one-pixel alternating shiver; only scarf placement is adjusted to
+the new neck. Focus keeps its separate book, and hearts/weather backgrounds are
+unchanged. Sleep overrides blinking, moods, and actions. CURIOUS continues to
+use occasional looks rather than looking continuously. The existing idle and
+weather action machine, timing, display transfer strategy, and pet storage are
+unchanged; rendering never writes pet progress.
+
+To replace one expression later:
+
+1. Draw a 24×24 one-bit image, retaining the current ear-tip region, neck and feet
+   alignment if you want existing overlays/transforms to line up.
+2. Export horizontal, MSB-first bytes in top-to-bottom row order, with white
+   pixels represented by `1`: exactly three bytes per row and 72 bytes total.
+   Do not use XBM's LSB-first format.
+3. Replace only that named array's initializer in `sprites.cpp`, retaining its
+   symbol, dimensions, and `PROGMEM`. Update the row comments for readability;
+   comments alone do not change the bitmap. No pet-state logic changes are needed.
+4. Verify/upload with the existing board settings. Check the expression and its
+   overlay alignment on the actual OLED.
+
+Physical OLED checklist:
+
+1. Check the ears, simple face, feet and curled tail on HOME; confirm clock,
+   temperature, weather label and ground remain unobstructed.
+2. Observe normal and double blinks, left/right looks, 1–2 pixel bounces and ear
+   twitches. Press C to check the existing blink restart. Confirm no trails or
+   black flashes, including when the displayed minute changes.
+3. Press B during an idle/weather pose: confirm the same hop/heart and sound,
+   then the normal mood return. Check that accepted interactions still count.
+4. With applicable cached weather, check sunny bounce, night upward gaze, rain
+   umbrella, snow scarf/shiver, storm crouch and fog looks. Confirm accessories
+   disappear when their reaction ends and neutral weather stays calm.
+5. At sleep hours, confirm the closed-eye sleep sprite and absence of awake
+   idle/weather actions. Check sleeping appearance during focus and DONE too.
+6. Run TIMER: verify the book covers the torso without hiding the face/countdown,
+   the countdown keeps running, and DONE retains its happy bounce/heart and cue.
+7. Confirm normal 30-second inactivity sleep and B wake, cached-weather/Wi-Fi-off
+   wake, and the existing RTC/NVS friendship/count/birthday restore logs.
+
 ## Validation
+
+Kitsune host checks verify all ten assets' pixel expansion, mood/action selection,
+blink/double-blink phases, ear/bounce/shiver offsets, weather timing and overlays,
+storm baseline, sleep/B/focus priority, frame gating, and no animation NVS writes.
+Source comparisons confirm the pet persistence and idle/weather scheduler and
+the entire display implementation are unchanged from before the sprite change.
+The full XIAO_ESP32S3 firmware build passes with the installed ESP32 core 3.3.12.
+No upload or physical OLED test was performed for this change.
+
+Sound host tests pass for cue/gap durations, rate limiting, timer priority,
+sleep-hour suppression/exception, immediate shutdown, optional startup,
+global disable, rollover, and PWM setup failure. The full firmware compiles
+with the installed XIAO_ESP32S3 board definition and Arduino-ESP32 core 3.3.12.
+No upload or physical piezo test was performed.
 
 The original refactor was verified against `testsketch`. Timer host tests cover
 menu/preset controls, active sleep inhibition, per-second redraw gating, DONE
@@ -431,8 +592,7 @@ accepted/rejected interactions, temporary moods, sleep schedule boundaries,
 friendship limits, RTC/NVS freshness selection, power-loss restoration, sleep
 commits, write batching, legacy migration, checksum fallback, failed storage and
 read-back, birthday preservation, and deferred birthday capture. A full module
-compile/link check uses the same stubs. Real board compilation and hardware
-tests still need the existing Arduino environment.
+compile/link check uses the same stubs. Hardware tests still need the existing device.
 
 On the physical device:
 

@@ -3,6 +3,7 @@
 #include "weather.h"
 #include "power.h"
 #include "timer.h"
+#include "sound.h"
 
 void setup() {
   Serial.begin(115200);
@@ -19,8 +20,10 @@ void setup() {
   lastActivityTime = millis();
   lastDisplayedMinute = currentMinute;
   initializeAnimations();
+  initializeSound();
   initializeTimer();
   if (!showTimerScreen()) drawHome();
+  soundStartup();
 }
 
 void loop() {
@@ -31,5 +34,6 @@ void loop() {
   checkClock();
   updateAnimations();
   updateTimer();
+  updateSound();
   sleepIfIdle();
 }

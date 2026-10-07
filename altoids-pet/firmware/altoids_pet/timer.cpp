@@ -3,6 +3,7 @@
 #include "pet.h"
 #include "power.h"
 #include "weather.h"
+#include "sound.h"
 #include <esp_attr.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -73,6 +74,7 @@ void finishTimer() {
   currentScreen = TIMER_DONE;
   saveTimer();
   Serial.println("Focus timer done.");
+  soundTimerDone();
 }
 } // namespace
 
