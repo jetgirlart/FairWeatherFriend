@@ -657,8 +657,8 @@ bool syncOnlineData() {
   // NTP TIME
   // ----------------------------------------------
 
-  configureTimezone();
-
+  // NTP maintains the UTC epoch. configTime() also overwrites TZ, so
+  // restore the Central POSIX rule afterward, before reading local time.
   configTime(
     0,
     0,
@@ -666,6 +666,8 @@ bool syncOnlineData() {
     "time.google.com",
     "time.nist.gov"
   );
+
+  configureTimezone();
 
   Serial.println(
     "Getting time..."
