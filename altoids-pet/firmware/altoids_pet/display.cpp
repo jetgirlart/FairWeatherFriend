@@ -3,7 +3,71 @@
 #include "weather.h"
 #include <Wire.h>
 
-Adafruit_SH1107 display = Adafruit_SH1107(128, 128, &Wire);
+namespace {
+// The stock SH110X display() sends a dirty rectangle through the remaining
+// pages. Rebuilding a frame makes that rectangle full-screen. Compare final
+// bytes instead, and send only changed spans using the same SH1107 page protocol.
+class PartialSH1107 : public Adafruit_SH1107 {
+public:
+  PartialSH1107() : Adafruit_SH1107(128, 128, &Wire) {}
+
+  void display() override {
+    if (!buffer || !i2c_dev) return;
+    size_t capacity = i2c_dev->maxBufferSize();
+    if (capacity < 2) return;
+    const uint8_t dataPrefix = 0x40;
+    i2c_dev->setSpeed(i2c_preclk);
+
+    for (uint8_t page = 0; page < 16; ++page) {
+      uint8_t *pixels = buffer + page * 128;
+      uint8_t *previous = sentFrame + page * 128;
+      int first = 0;
+      int last = 127;
+      if (sentFrameValid) {
+        while (first < 128 && pixels[first] == previous[first]) ++first;
+        if (first == 128) continue;
+        while (last > first && pixels[last] == previous[last]) --last;
+      }
+
+      uint8_t column = first + _page_start_offset;
+      const uint8_t commands[] = {
+        0x00, static_cast<uint8_t>(SH110X_SETPAGEADDR + page),
+        static_cast<uint8_t>(0x10 | (column >> 4)),
+        static_cast<uint8_t>(column & 0x0F)
+      };
+      bool success = i2c_dev->write(commands, sizeof(commands));
+      size_t position = first;
+      while (success && position <= static_cast<size_t>(last)) {
+        size_t count = last - position + 1;
+        if (count > capacity - 1) count = capacity - 1;
+        success = i2c_dev->write(pixels + position, count, true, &dataPrefix, 1);
+        position += count;
+      }
+      if (!success) {
+        // A partial transfer may have changed OLED RAM. Resynchronize the
+        // complete image next time without ever sending an intermediate blank.
+        sentFrameValid = false;
+        i2c_dev->setSpeed(i2c_postclk);
+        return;
+      }
+    }
+
+    memcpy(sentFrame, buffer, sizeof(sentFrame));
+    sentFrameValid = true;
+    window_x1 = window_y1 = 1024;
+    window_x2 = window_y2 = -1;
+    i2c_dev->setSpeed(i2c_postclk);
+  }
+
+private:
+  uint8_t sentFrame[128 * 16] = {};
+  bool sentFrameValid = false;
+};
+
+PartialSH1107 oled;
+} // namespace
+
+Adafruit_SH1107 &display = oled;
 
 // ==================================================
 // SCREEN STATE
@@ -905,7 +969,7 @@ void drawHome() {
     label
   );
 
-  // Push one complete frame.
+  // Transfer only bytes that differ from the last completed OLED frame.
 
   display.display();
 }

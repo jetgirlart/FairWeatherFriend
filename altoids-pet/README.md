@@ -255,10 +255,18 @@ bursts. Ordinary blinks may postpone a special action slightly.
 
 Idle stepping now occurs only on an existing 250 ms home frame. This makes each
 blink/twitch/bounce phase visible instead of completing between OLED pushes.
-The weather `animationFrame` cadence is unchanged. No extra redraws are added:
-the existing home framebuffer is composed and pushed once, with no intervening
-blank OLED frame. Full frames are still needed to preserve weather effects behind
-the moving pet. Menus/weather pages do not run home idle animation.
+The weather `animationFrame` cadence is unchanged. The existing home framebuffer
+is composed once in RAM, with no intervening blank OLED frame. The display layer
+compares the finished image with the last transmitted image and sends only the
+changed column span on each changed eight-pixel-high OLED page. An unchanged
+image sends no pixel data; clock changes do not rewrite unchanged pet/weather
+regions. Menus/weather pages do not run home idle animation.
+
+Partial transfers use the existing Adafruit I2C interface and SH1107 page
+protocol, address, and clock speeds. They require an extra 2 KB RAM snapshot,
+not another library. The first transfer initializes the whole image. A failed
+I2C write invalidates the snapshot so the next transfer resynchronizes the image.
+Menu transitions naturally transfer every changed region without stale pixels.
 
 On hardware, watch HOME for about 20–25 seconds to catch a normal blink and an
 occasional look, double blink, bounce, or twitch before the unchanged 30-second

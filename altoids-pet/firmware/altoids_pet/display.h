@@ -10,7 +10,7 @@ enum ScreenMode {
   WEATHER_SCREEN
 };
 
-extern Adafruit_SH1107 display;
+extern Adafruit_SH1107 &display;
 extern ScreenMode currentScreen;
 extern const char* menuItems[];
 extern const int menuCount;
