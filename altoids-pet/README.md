@@ -102,6 +102,7 @@ altoids-pet/
 │       ├── pet.cpp / pet.h
 │       ├── weather.cpp / weather.h
 │       ├── power.cpp / power.h
+│       ├── timer.cpp / timer.h
 │       ├── config.example.h
 │       └── config.h             # local, gitignored
 ├── hardware/
@@ -122,7 +123,10 @@ altoids-pet/
 - `weather` owns Wi-Fi/NTP sync, timezone, local clock and moon calculations,
   Open-Meteo parsing, sunrise/sunset, weather mapping, and the RTC weather cache.
 - `power` owns button pins, polling/debounce, activity tracking, wake-cause
-  detection, and deep sleep.
+  detection, and deep sleep. Its inactivity gate skips sleep only while a timer
+  is actively counting down.
+- `timer` owns focus presets, monotonic countdown, RTC resume, completion,
+  and timer-screen button actions.
 
 State is defined once in its owning module. Headers expose shared state and
 functions needed by the other modules. The cache fields and online sync
@@ -139,15 +143,16 @@ checks and failure fallbacks remain intact. This is a wake-time cache check,
 not a new periodic online refresh.
 
 - A opens the menu from home and cycles its entries.
-- B reacts with the pet while awake, opens WEATHER from the menu, or logs the
-  selected TIMER, PET, or SETTINGS entry.
+- B reacts with the pet while awake, opens WEATHER or TIMER from the menu, or
+  logs the selected PET or SETTINGS entry.
 - C returns from weather to the menu, or otherwise returns home.
 - Pet sleep remains from 22:00 until 07:00. Reaction duration, blinking,
   weather animations, moon phases, sunrise/sunset, and screen drawing are
   preserved.
 - Clock checks remain every five seconds while time is valid, with clock-driven
   home redraws when the displayed minute changes.
-- After 30 seconds without an accepted button press, the OLED turns off and the
+- Outside an active focus timer, after 30 seconds without an accepted button
+  press, the OLED turns off and the
   ESP32 enters deep sleep. B wakes it through EXT0 at a LOW level.
 
 ## Persistent pet state
@@ -337,9 +342,82 @@ Hardware checks:
    changes for flicker. Reaction-only sessions should add no interactions,
    friendship gains, or NVS saves.
 
+## Timer / Focus Mode
+
+Select the existing TIMER menu item with B. Setup offers **5, 10, 15, and 25
+minutes**, starting at 5 minutes on a new timer record.
+
+| Screen | A | B | C |
+| --- | --- | --- | --- |
+| Timer setup | Cycle presets | Start selected timer | Return to menu |
+| Running focus | No action | No action | Cancel and return to menu |
+| DONE | No action | No action | Return home |
+
+The running screen shows large `MM:SS` text and a quiet pet with a small open
+book. It redraws only when the remaining displayed second changes. Home idle
+and weather animations pause on timer screens; their scheduler and partial OLED
+transfer remain unchanged. A pet inside its normal sleep hours keeps the sleeping
+pose instead of reading or celebrating.
+
+Countdown uses unsigned `millis()` deltas and continues across rollover, without
+animation delays. The 30-second inactivity sleep gate is suppressed only while
+the countdown is running. No new wake source or alarm is added. When it finishes,
+DONE appears with a short 1.5-second bounce/heart celebration for an awake pet.
+Completion grants a fresh 30-second DONE viewing window, then normal inactivity
+sleep applies. B in focus/DONE does not interact with the pet or restart the timer.
+The timer adds no sound, vibration, progress rewards, or NVS writes.
+
+`timer.cpp` keeps a separate magic/version/checksum-validated RTC record marked
+`RTC_NOINIT_ATTR`; this avoids startup reinitialization on supported warm resets
+and retains state across deep sleep. It stores the selected preset, phase,
+remaining milliseconds, and a UTC deadline when the existing clock is valid.
+See Espressif's
+[RTC memory attributes](https://github.com/espressif/esp-idf/blob/master/components/esp_common/include/esp_attr.h).
+This record does not change pet RTC/NVS storage.
+
+After the normal boot weather/time and pet initialization, a valid active timer
+resumes on the focus screen. If valid system time and a saved deadline are
+available, elapsed reset/sleep time is included; an elapsed deadline opens DONE.
+Backward wall-clock changes cannot increase the saved remaining duration.
+Normal live countdown always uses `millis()`, so a wall-clock correction cannot
+jump it. If a reset occurs without a valid UTC clock/deadline, it resumes the
+saved remaining duration; time spent powered down/resetting cannot be recovered
+in that fallback. UTC recovery has approximately one-second resolution.
+
+RTC retention depends on reset cause and power remaining available. Complete
+power removal loses the timer; it is deliberately not written to flash. Invalid
+or interrupted RTC records are rejected safely. Setup/cancel/DONE dismissal clear
+running status. Existing boot Wi-Fi/weather decisions remain unchanged when a
+timer is resumed; no extra synchronization is requested.
+
+Physical-device checklist:
+
+1. Open MENU → TIMER. Verify A cycles 5 → 10 → 15 → 25 → 5, B starts the chosen
+   value, and C from setup returns to the same menu selection.
+2. Start 5 minutes and leave the device untouched for longer than 30 seconds.
+   Verify it stays awake, decrements once per second, and shows the pet/book
+   clearly without flicker or leftover weather/idle graphics.
+3. Verify A/B during focus do not restart the countdown or add pet interactions.
+   C cancels to the menu, after which normal 30-second sleep/B wake still works.
+4. Let a 5-minute timer finish. Verify `00:01` transitions to DONE, the short
+   awake-pet celebration, no immediate sleep, and C returns home. Leaving DONE
+   untouched should resume normal sleep after 30 seconds.
+5. Select/start/cancel the longer presets to check their initial values. Complete
+   a 25-minute session when convenient to confirm long-session sleep inhibition.
+6. During an active timer with valid time, use a warm reset while keeping power
+   connected. Check the resume log and remaining time, including normal boot
+   latency. If its deadline elapsed during reset, it should show DONE.
+7. Verify normal sleeping-pet appearance if a focus session crosses 22:00;
+   check weather/time, menu navigation, pet counts/birthday, cache use, and B wake
+   afterward. Timer use alone must not change pet progress.
+
 ## Validation
 
-The original refactor was verified against `testsketch`. Weather-reaction host
+The original refactor was verified against `testsketch`. Timer host tests cover
+menu/preset controls, active sleep inhibition, per-second redraw gating, DONE
+viewing window, cancellation, RTC/deadline recovery, unavailable-clock fallback,
+invalid records, backward clock corrections, millis rollover, sleeping pets,
+and absence of timer pet/NVS writes. Full stub compile/link checks pass. Weather-reaction host
 tests cover all poses/durations, neutral weather, sleep/menu/B/C priority,
 weather/daylight cancellation, idle/blink coexistence, no reaction NVS writes,
 and one framebuffer push. Idle host tests cover

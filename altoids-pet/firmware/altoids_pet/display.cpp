@@ -1,6 +1,7 @@
 #include "display.h"
 #include "pet.h"
 #include "weather.h"
+#include "timer.h"
 #include <Wire.h>
 
 namespace {
@@ -1202,6 +1203,7 @@ void initializeDisplay() {
 }
 
 void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
+  if (handleTimerButtons(aPressed, bPressed, cPressed)) return;
   // ----------------------------------------------
   // A BUTTON
   // ----------------------------------------------
@@ -1277,6 +1279,8 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
 
         drawWeatherScreen();
 
+      } else if (menuIndex == 1) {
+        openTimerSetup();
       } else {
 
         Serial.print(
@@ -1328,4 +1332,59 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
       drawHome();
     }
   }
+}
+
+void drawTimerSetup(uint32_t minutes) {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextSize(2);
+  display.setCursor(34, 5);
+  display.print("TIMER");
+  char text[12];
+  snprintf(text, sizeof(text), "%lu MIN", static_cast<unsigned long>(minutes));
+  display.setTextSize(3);
+  display.setCursor(64 - strlen(text) * 9, 43);
+  display.print(text);
+  display.setTextSize(1);
+  display.setCursor(13, 91); display.print("A: NEXT");
+  display.setCursor(13, 103); display.print("B: START");
+  display.setCursor(13, 115); display.print("C: MENU");
+  display.display();
+}
+
+void drawFocusTimer(uint32_t seconds) {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextSize(2);
+  display.setCursor(34, 4); display.print("FOCUS");
+  char text[10];
+  snprintf(text, sizeof(text), "%02lu:%02lu",
+           static_cast<unsigned long>(seconds / 60), static_cast<unsigned long>(seconds % 60));
+  display.setTextSize(3);
+  display.setCursor(19, 27); display.print(text);
+  bool sleeping = isPetSleeping();
+  drawPet(40, 55, sleeping, false);
+  if (!sleeping) {
+    // A small open book in front of the pet; focus is a quiet static pose.
+    display.fillRect(50, 101, 28, 13, SH110X_BLACK);
+    display.drawRect(50, 101, 28, 13, SH110X_WHITE);
+    display.drawLine(64, 101, 64, 113, SH110X_WHITE);
+    display.drawLine(53, 105, 60, 105, SH110X_WHITE);
+    display.drawLine(68, 105, 75, 105, SH110X_WHITE);
+  }
+  display.display();
+}
+
+void drawTimerDone(uint32_t frame) {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextSize(3);
+  display.setCursor(28, 5); display.print("DONE");
+  bool sleeping = isPetSleeping();
+  bool celebrate = !sleeping && frame < 6;
+  drawPet(40, 40 - (celebrate && frame % 2 == 0 ? 2 : 0), sleeping, false);
+  if (celebrate) drawHeart(88, 47);
+  display.setTextSize(1);
+  display.setCursor(31, 117); display.print("C: HOME");
+  display.display();
 }

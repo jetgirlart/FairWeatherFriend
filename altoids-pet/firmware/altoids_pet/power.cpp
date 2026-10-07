@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display.h"
 #include "pet.h"
+#include "timer.h"
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
@@ -165,6 +166,7 @@ ButtonPresses readButtons() {
 }
 
 void sleepIfIdle() {
+  if (timerActive()) return;
   // ----------------------------------------------
   // AUTO DEEP SLEEP
   // ----------------------------------------------

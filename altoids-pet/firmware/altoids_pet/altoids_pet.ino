@@ -2,6 +2,7 @@
 #include "pet.h"
 #include "weather.h"
 #include "power.h"
+#include "timer.h"
 
 void setup() {
   Serial.begin(115200);
@@ -18,7 +19,8 @@ void setup() {
   lastActivityTime = millis();
   lastDisplayedMinute = currentMinute;
   initializeAnimations();
-  drawHome();
+  initializeTimer();
+  if (!showTimerScreen()) drawHome();
 }
 
 void loop() {
@@ -28,5 +30,6 @@ void loop() {
   updatePetReaction();
   checkClock();
   updateAnimations();
+  updateTimer();
   sleepIfIdle();
 }

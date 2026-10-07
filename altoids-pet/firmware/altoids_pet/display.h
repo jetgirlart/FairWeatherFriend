@@ -7,7 +7,10 @@
 enum ScreenMode {
   HOME,
   MENU,
-  WEATHER_SCREEN
+  WEATHER_SCREEN,
+  TIMER_SETUP,
+  FOCUS_SCREEN,
+  TIMER_DONE
 };
 
 extern Adafruit_SH1107 &display;
@@ -24,3 +27,7 @@ void drawMenu();
 void initializeDisplayBus();
 void initializeDisplay();
 void handleButtons(bool aPressed, bool bPressed, bool cPressed);
+
+void drawTimerSetup(uint32_t minutes);
+void drawFocusTimer(uint32_t seconds);
+void drawTimerDone(uint32_t frame);
