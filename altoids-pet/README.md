@@ -169,27 +169,53 @@ against cooldowns; without valid time, only awake `millis()` counts. Inactivity
 never awards points automatically and never removes them. Temporary interaction
 moods settle to CALM or SLEEPY on boot, according to the sleep schedule.
 
-A versioned record is stored using the ESP32 core's
+Versioned checkpoints use the ESP32 core's
 [Preferences/NVS API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/preferences.html)
-in namespace `altoids-pet`, key `state`. It is restored on ordinary reboot or
-power-up; a valid deep-sleep RTC record takes priority. Record size, version,
-and basic bounds are validated before restoration.
+in namespace `altoids-pet`. Two alternating keys, `state0` and `state1`, hold
+sequence-numbered records with checksums. Boot validates record size, version,
+checksum, and bounds, then selects the newest valid NVS checkpoint. On deep-sleep
+wake, valid RTC state takes priority when it is at least as recent; a newer NVS
+checkpoint takes priority over older RTC state. Ordinary reboot/power-up restores
+from NVS. The previous firmware's single `state` record is imported automatically
+without resetting progress or birthday; do not erase NVS during the upgrade.
 
-NVS writes occur on first initialization, when an unknown birthday first
-becomes known, and subsequently only for changed progress at most once per ten
-minutes. Mood changes alone do not trigger writes. The loop and sleep hook
-check for an eligible checkpoint; sleep never forces a write inside the
-cooldown. Failed storage operations retain the RTC state and retry after the
-same cooldown instead of writing on every loop or blocking sleep.
+A known birthday is also stored once under `birthday`. This immutable value
+remains authoritative even if a damaged progress checkpoint forces fallback to
+an older one that did not yet know the birthday. No valid existing birthday is
+replaced by the current boot time.
 
-**Power-loss tradeoff:** removing power or rebooting restores the most recent
-NVS checkpoint. Interactions/friendship earned since that checkpoint can be
-lost. Deep sleep retains them in RTC immediately. Cooldowns and dirty state
-also survive deep sleep, so repeatedly waking does not force flash writes.
+NVS writes happen at these checkpoints:
 
-Serial Monitor reports friendship, interaction count, and birthday at startup,
-progress on successful interaction, and checkpoint results. Mood is currently
-internal state, accessible through `getPetState()`.
+- **First initialization or legacy migration:** save the initial/imported record.
+- **First valid birthday:** save the immutable birthday and updated checkpoint.
+  The birthday key is written once; later checkpoints do not rewrite it.
+- **Friendship gain:** save changed progress on the next normal pet update.
+  Friendship gains remain limited to one per ten minutes.
+- **Before normal deep sleep:** save any dirty progress, even inside the periodic
+  cooldown. This commits batched interactions before the device sleeps.
+- **While continuously awake:** save interaction-only changes when ten minutes
+  have elapsed since the last successful checkpoint.
+
+Clean state, mood changes, animation frames, and unchanged wake/sleep cycles do
+not write flash. Multiple button presses are combined into one later checkpoint;
+there is no unconditional write on each B press. Writes are read back and
+validated before marking progress clean. Failed writes retain dirty RTC state
+and wait ten minutes before retrying, including sleep-hook attempts. If NVS
+cannot be opened/read at boot, persistence is disabled for that session to avoid
+overwriting an unread pet; recovery is retried on the next boot.
+
+**Power-loss boundary:** friendship, interactions, and birthday survive power
+loss once a checkpoint has succeeded. After normal deep sleep, all accepted
+interactions are checkpointed if storage is working. Sudden power removal while
+awake can still lose interactions after the last checkpoint: preserving every
+press immediately would require writing each press. A failed checkpoint also
+cannot guarantee power-loss recovery. RTC retains these changes across deep
+sleep while powered.
+
+Serial Monitor explicitly reports `Pet loaded from RTC`, `Pet loaded from NVS`,
+or `Pet loaded from newly initialized`, followed by friendship, interactions,
+and birthday. Save messages identify sleep versus other checkpoints, and failures
+are reported. Mood is internal state, accessible through `getPetState()`.
 
 ## Validation
 
@@ -198,8 +224,9 @@ addition, checks confirm that weather/time code, graphics, blinking, animation,
 and the original button/sleep implementations remain intact except for the
 explicit pet hooks. Host tests using temporary ESP32 API/storage stubs exercise
 accepted/rejected interactions, temporary moods, sleep schedule boundaries,
-friendship limits, RTC wake, NVS restoration and write throttling, failed
-storage, counter saturation, and deferred birthday capture. A full module
+friendship limits, RTC/NVS freshness selection, power-loss restoration, sleep
+commits, write batching, legacy migration, checksum fallback, failed storage and
+read-back, birthday preservation, and deferred birthday capture. A full module
 compile/link check uses the same stubs. Real board compilation and hardware
 tests still need the existing Arduino environment.
 
@@ -210,11 +237,15 @@ On the physical device:
 2. On HOME during awake hours, press B and verify the same hop/heart, plus one
    counted interaction in Serial Monitor. Rapid presses should count but award
    only one friendship point in ten minutes. Menus should remain unchanged.
-3. Wait for the normal 30-second sleep, wake with B, and check startup progress
-   is retained. Verify rapid sleep/wake does not bypass friendship cooldown.
-4. Interact after ten minutes and confirm one more friendship point. Look for
-   a checkpoint message, then remove/reconnect power: checkpointed progress and
-   birthday should restore. Uncheckpointed progress may roll back.
+3. Press B several times, note the count, then wait for the normal 30-second
+   sleep and a `Pet NVS saved (sleep)` message. Unplug/reconnect and verify
+   `Pet loaded from NVS` restores friendship, the exact count, and birthday.
+4. Verify powered B wake reports `Pet loaded from RTC` with the same progress.
+   Waking and sleeping without interaction should not produce another save.
+   Rapid presses should not write per press; after ten minutes an interaction
+   may earn one more friendship point and trigger a checkpoint. Birthday should
+   remain identical across all reboots. Power loss before a checkpoint can roll
+   back recent interaction-only changes.
 5. Check 07:00 and 22:00 behavior: sleeping B presses should not react or count.
    Verify the same clock, sunrise/sunset, weather/moon graphics, blinking,
    animations, Wi-Fi behavior, cached-weather wake, and stale-cache refresh.

@@ -39,4 +39,5 @@ struct PetState {
 void initializePetState();
 const PetState &getPetState();
 bool interactWithPet();
-void checkpointPetState();
+// beforeSleep commits dirty progress even inside the periodic cooldown.
+void checkpointPetState(bool beforeSleep = false);

@@ -69,7 +69,7 @@ void goToSleep() {
     "Going to sleep..."
   );
 
-  checkpointPetState();
+  checkpointPetState(true);
 
   // OLED completely off.
 
