@@ -896,8 +896,8 @@ void checkClock() {
   // ----------------------------------------------
   // CLOCK CHECK
   //
-  // Check every 5 seconds, but only redraw because
-  // of the clock when the displayed minute changes.
+  // Check every 5 seconds. The home animation scheduler renders changes
+  // in its next complete frame, without a separate minute-change redraw.
   // ----------------------------------------------
 
   if (
@@ -922,13 +922,8 @@ void checkClock() {
         lastDisplayedMinute =
           currentMinute;
 
-        if (
-          currentScreen ==
-          HOME
-        ) {
-
-          drawHome();
-        }
+        // The existing 250 ms home animation frame draws the new clock.
+        // Avoid a second full OLED transfer at every minute boundary.
       }
     }
   }
