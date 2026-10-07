@@ -217,9 +217,66 @@ or `Pet loaded from newly initialized`, followed by friendship, interactions,
 and birthday. Save messages identify sleep versus other checkpoints, and failures
 are reported. Mood is internal state, accessible through `getPetState()`.
 
+## Idle personality and expressions
+
+The pet remains mostly still, with disposable runtime expression state in
+`pet.cpp`. Idle animation never changes mood, friendship, interaction count,
+birthday, activity/sleep timers, or NVS checkpoints.
+
+| Idle state | Appearance | Duration |
+| --- | --- | --- |
+| REST | Original pose | Between actions |
+| BLINK | Closed eyes, then normal eyes | 250 ms closed |
+| DOUBLE_BLINK | Closed → open → closed → normal | Three 250 ms phases |
+| LOOK_LEFT / LOOK_RIGHT | Eyes shift 2 pixels | 1 second |
+| BOUNCE | Whole pet moves up 1 → 2 → 1 pixels, then settles | Three 250 ms phases |
+| EAR_TWITCH | Left ear tip shifts 1 → 2 pixels, then settles | Two 250 ms phases |
+
+| Mood | Blink interval after a blink | Special-action wait | Preference |
+| --- | --- | --- | --- |
+| CALM | 4–7 seconds | 10–18 seconds | Quiet looks/twitches; 30% of opportunities remain REST |
+| HAPPY | 3–5 seconds | 2–4 seconds | More bounce and double blink |
+| CURIOUS | 3.5–5.5 seconds | 6–10 seconds | Mostly left/right looking |
+| EXCITED | 2–3.5 seconds | 1.5–3 seconds | Mostly bounce/double blink |
+| SLEEPY | 7–10 seconds | No special motion | 500 ms closed blink if awake |
+
+Actual sleeping pets keep the original closed-eye pose and perform no awake
+idle actions, including blinking. B's existing six-pixel hop/heart takes priority
+and cancels idle motion. The existing mood lifecycle still makes EXCITED brief
+and HAPPY last five seconds; CURIOUS is supported for future mood behavior but
+is not newly assigned. Timing varies with a small local generator; it does not
+use a library, affect other randomness, or persist.
+
+The initial and C-return-home blink deadline remains three seconds. Action
+waits are scheduled when awake idle resumes, when the mood changes, and after a
+special action finishes. Blink timing is rescheduled after single/double blinks.
+Actions run one at a time and advance with `millis()`, without delays or catch-up
+bursts. Ordinary blinks may postpone a special action slightly.
+
+Idle stepping now occurs only on an existing 250 ms home frame. This makes each
+blink/twitch/bounce phase visible instead of completing between OLED pushes.
+The weather `animationFrame` cadence is unchanged. No extra redraws are added:
+the existing home framebuffer is composed and pushed once, with no intervening
+blank OLED frame. Full frames are still needed to preserve weather effects behind
+the moving pet. Menus/weather pages do not run home idle animation.
+
+On hardware, watch HOME for about 20–25 seconds to catch a normal blink and an
+occasional look, double blink, bounce, or twitch before the unchanged 30-second
+sleep. Repeated quiet sessions may be needed to see all weighted actions. Press B
+during an idle action to verify the original hop/heart wins; afterward watch for
+a livelier HAPPY expression. Check C/home and menu navigation, the sleeping pose
+at 22:00–07:00, normal B wake, unchanged weather effects, and absence of black
+flashes. Verify idle-only sessions leave interaction counts and NVS save activity
+unchanged. CURIOUS/EXCITED/SLEEPY-awake profiles are covered by host tests; seeing
+all of them on hardware would require a temporary diagnostic build, since the
+current mood lifecycle does not hold those awake moods for long.
+
 ## Validation
 
-The original refactor was verified against `testsketch`. For the pet state
+The original refactor was verified against `testsketch`. Idle host tests cover
+visible blink phases, expression geometry, mood-weighted choice, frame gating,
+sleep/menu/B priority, delayed loop steps, rollover deadlines, no NVS writes,
+and one complete OLED push per frame. For the pet state
 addition, checks confirm that weather/time code, graphics, blinking, animation,
 and the original button/sleep implementations remain intact except for the
 explicit pet hooks. Host tests using temporary ESP32 API/storage stubs exercise

@@ -337,6 +337,129 @@ bool interactWithPet() {
   return true;
 }
 
+// Idle expression is disposable runtime state; it never dirties pet progress.
+namespace {
+enum class IdleAction : uint8_t {
+  REST,
+  BLINK,
+  DOUBLE_BLINK,
+  LOOK_LEFT,
+  LOOK_RIGHT,
+  BOUNCE,
+  EAR_TWITCH
+};
+
+struct IdleTiming {
+  unsigned long blinkMin;
+  unsigned long blinkRange;
+  unsigned long actionMin;
+  unsigned long actionRange;
+};
+
+IdleAction idleAction = IdleAction::REST;
+uint8_t idleStep = 0;
+unsigned long idleStepStarted = 0;
+unsigned long nextIdleTime = 0;
+unsigned long idleBlinkDeadline = 3500;
+PetMood idleMood = PetMood::CALM;
+bool idlePaused = true;
+uint32_t idleVariation = 0x6D2B79F5UL;
+
+// A small local generator varies timing without affecting any other subsystem.
+uint32_t varyIdle() {
+  idleVariation ^= idleVariation << 13;
+  idleVariation ^= idleVariation >> 17;
+  idleVariation ^= idleVariation << 5;
+  return idleVariation;
+}
+
+IdleTiming idleTiming(PetMood mood) {
+  switch (mood) {
+    case PetMood::HAPPY:   return {3000, 2001, 2000, 2001};
+    case PetMood::CURIOUS: return {3500, 2001, 6000, 4001};
+    case PetMood::EXCITED: return {2000, 1501, 1500, 1501};
+    case PetMood::SLEEPY:  return {7000, 3001, 20000, 10001};
+    default:              return {4000, 3001, 10000, 8001};
+  }
+}
+
+// Signed difference handles the 32-bit millis rollover on ESP32.
+bool idleDue(unsigned long now, unsigned long deadline) {
+  return static_cast<int32_t>(static_cast<uint32_t>(now - deadline)) >= 0;
+}
+
+void scheduleIdle(unsigned long now) {
+  IdleTiming timing = idleTiming(idleMood);
+  nextIdleTime = now + timing.actionMin + varyIdle() % timing.actionRange;
+}
+
+void scheduleBlink(unsigned long now) {
+  IdleTiming timing = idleTiming(idleMood);
+  nextBlinkTime = now + timing.blinkMin + varyIdle() % timing.blinkRange;
+  idleBlinkDeadline = nextBlinkTime;
+}
+
+IdleAction chooseIdle() {
+  uint32_t choice = varyIdle() % 100;
+  switch (idleMood) {
+    case PetMood::HAPPY:
+      if (choice < 45) return IdleAction::BOUNCE;
+      if (choice < 65) return IdleAction::DOUBLE_BLINK;
+      if (choice < 80) return IdleAction::LOOK_LEFT;
+      if (choice < 95) return IdleAction::LOOK_RIGHT;
+      return IdleAction::EAR_TWITCH;
+    case PetMood::CURIOUS:
+      if (choice < 35) return IdleAction::LOOK_LEFT;
+      if (choice < 70) return IdleAction::LOOK_RIGHT;
+      if (choice < 80) return IdleAction::DOUBLE_BLINK;
+      if (choice < 95) return IdleAction::EAR_TWITCH;
+      return IdleAction::BOUNCE;
+    case PetMood::EXCITED:
+      if (choice < 60) return IdleAction::BOUNCE;
+      if (choice < 90) return IdleAction::DOUBLE_BLINK;
+      return choice < 95 ? IdleAction::LOOK_LEFT : IdleAction::LOOK_RIGHT;
+    case PetMood::SLEEPY:
+      return IdleAction::REST;
+    default:
+      if (choice < 20) return IdleAction::LOOK_LEFT;
+      if (choice < 40) return IdleAction::LOOK_RIGHT;
+      if (choice < 55) return IdleAction::EAR_TWITCH;
+      if (choice < 60) return IdleAction::BOUNCE;
+      if (choice < 70) return IdleAction::DOUBLE_BLINK;
+      return IdleAction::REST;
+  }
+}
+
+void pauseIdle() {
+  idleAction = IdleAction::REST;
+  idleStep = 0;
+  blinking = false;
+  idlePaused = true;
+}
+
+unsigned long idleStepDuration() {
+  // Every visible phase lasts at least one existing 250 ms display interval.
+  if (idleAction == IdleAction::LOOK_LEFT || idleAction == IdleAction::LOOK_RIGHT) {
+    return 1000;
+  }
+  if (idleAction == IdleAction::BLINK && idleMood == PetMood::SLEEPY) return 500;
+  return 250;
+}
+
+uint8_t idleStepCount() {
+  switch (idleAction) {
+    case IdleAction::DOUBLE_BLINK: return 3; // shut, open, shut
+    case IdleAction::BOUNCE: return 3;       // up 1, up 2, up 1
+    case IdleAction::EAR_TWITCH: return 2;   // tip shifts 1 pixel, then 2
+    default: return 1;
+  }
+}
+
+bool idleVisible() {
+  return currentScreen == HOME && !petReacting && !isPetSleeping();
+}
+} // namespace
+
 // ==================================================
 // PET GRAPHICS
 // ==================================================
@@ -348,11 +471,22 @@ void drawPet(
   bool eyesClosed
 ) {
 
+  // Keep the B hop and sleeping pose authoritative, even on immediate redraws.
+  bool expressIdle = !sleeping && idleVisible() && nextBlinkTime == idleBlinkDeadline;
+  int lookOffset = 0;
+  int earOffset = 0;
+  if (expressIdle) {
+    if (idleAction == IdleAction::LOOK_LEFT) lookOffset = -2;
+    if (idleAction == IdleAction::LOOK_RIGHT) lookOffset = 2;
+    if (idleAction == IdleAction::BOUNCE) y -= idleStep == 1 ? 2 : 1;
+    if (idleAction == IdleAction::EAR_TWITCH) earOffset = idleStep + 1;
+  }
+
   // ears
 
   display.drawTriangle(
     x + 6, y + 12,
-    x + 14, y,
+    x + 14 + earOffset, y,
     x + 20, y + 14,
     SH110X_WHITE
   );
@@ -397,14 +531,14 @@ void drawPet(
   } else {
 
     display.fillCircle(
-      x + 16,
+      x + 16 + lookOffset,
       y + 24,
       2,
       SH110X_WHITE
     );
 
     display.fillCircle(
-      x + 32,
+      x + 32 + lookOffset,
       y + 24,
       2,
       SH110X_WHITE
@@ -482,51 +616,59 @@ void drawHeart(int x, int y) {
 // ==================================================
 
 void updateBlink() {
-
-  if (
-    currentScreen != HOME ||
-    isPetSleeping()
-  ) {
-
-    blinking =
-      false;
-
+  if (!idleVisible()) {
+    pauseIdle();
     return;
   }
 
-  unsigned long now =
-    millis();
-
-  if (
-    !blinking &&
-    now >= nextBlinkTime
-  ) {
-
-    blinking =
-      true;
-
-    blinkStarted =
-      now;
+  // C already resets the shared blink deadline. Honor that existing control
+  // by canceling the idle pose and preserving its three-second restart.
+  if (nextBlinkTime != idleBlinkDeadline) {
+    pauseIdle();
+    idleBlinkDeadline = nextBlinkTime;
   }
 
-  if (
-    blinking &&
-    now - blinkStarted >= 160
-  ) {
-
-    blinking =
-      false;
-
-    // Variable-ish blink timing without using
-    // expensive random behavior.
-
-    nextBlinkTime =
-      now +
-      3200 +
-      (
-        animationFrame % 5
-      ) * 350;
+  unsigned long now = millis();
+  PetMood mood = getPetState().mood;
+  if (idlePaused || mood != idleMood) {
+    idleMood = mood;
+    scheduleIdle(now);
+    // Keep the existing first/return-home blink deadline. Mood transitions
+    // otherwise use their new cadence; an active action completes naturally.
+    if (!idlePaused && idleAction == IdleAction::REST) scheduleBlink(now);
+    idlePaused = false;
   }
+
+  if (idleAction != IdleAction::REST) {
+    if (now - idleStepStarted >= idleStepDuration()) {
+      idleStepStarted = now;
+      if (++idleStep >= idleStepCount()) {
+        bool wasBlink = idleAction == IdleAction::BLINK || idleAction == IdleAction::DOUBLE_BLINK;
+        bool wasIdleAction = idleAction != IdleAction::BLINK;
+        idleAction = IdleAction::REST;
+        idleStep = 0;
+        if (wasBlink) scheduleBlink(now);
+        if (wasIdleAction) scheduleIdle(now);
+      }
+    }
+  } else {
+    IdleAction action = IdleAction::REST;
+    if (idleDue(now, nextBlinkTime)) {
+      action = IdleAction::BLINK;
+    } else if (idleDue(now, nextIdleTime)) {
+      action = chooseIdle();
+      if (action == IdleAction::REST) scheduleIdle(now);
+    }
+    if (action != IdleAction::REST) {
+      idleAction = action;
+      idleStep = 0;
+      idleStepStarted = now;
+      if (action == IdleAction::BLINK || action == IdleAction::DOUBLE_BLINK) blinkStarted = now;
+    }
+  }
+
+  blinking = idleAction == IdleAction::BLINK ||
+             (idleAction == IdleAction::DOUBLE_BLINK && idleStep != 1);
 }
 
 // ==================================================
@@ -539,13 +681,12 @@ void updateAnimations() {
     currentScreen != HOME
   ) {
 
+    pauseIdle();
     return;
   }
 
   unsigned long now =
     millis();
-
-  updateBlink();
 
   if (
     now - lastAnimationTime <
@@ -558,6 +699,7 @@ void updateAnimations() {
   lastAnimationTime =
     now;
 
+  updateBlink();
   animationFrame++;
 
   // Redraw one complete framebuffer.
@@ -580,12 +722,16 @@ bool isPetSleeping() {
 }
 
 void initializeAnimations() {
+  pauseIdle();
+  idleVariation = 0x6D2B79F5UL ^ static_cast<uint32_t>(millis());
+  if (idleVariation == 0) idleVariation = 1;
   lastAnimationTime =
     millis();
 
   nextBlinkTime =
     millis() +
     3000;
+  idleBlinkDeadline = nextBlinkTime;
 }
 
 void updatePetReaction() {
