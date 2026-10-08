@@ -159,20 +159,27 @@ existing fetch can still display weather; the journal logs why it skipped progre
 
 ## Permanent saves and RTC cache
 
-`BuddySaveData` in `save.h` is **saveVersion 1**. It contains the research start
+`BuddySaveData` in `save.h` is **saveVersion 2**. It contains the research start
 (`createdAt`, exported as `researchBeganAt`), observation/day totals, latest
 observation, dated high/low records, eight category counters, discovery flags,
-unlocked gear flags, and equipped gear ID. A zero start timestamp means the
+unlocked gear flags, and six equipped slot IDs. A zero start timestamp means the
 existing clock has not become valid yet. It is captured once and never reset
 by observations, sleep, reboot, or firmware upload. A confirmed Import Buddy is
 an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 148-byte little-endian payload. Native structs, padding, mood,
+and an explicit 168-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
+
+Version 1 buddy records (148-byte payloads) are verified and migrated explicitly:
+all progress/unlock fields remain intact, the old equipped item goes into its
+matching slot, and other slots start at NONE. The newest valid generation wins
+across v1/v2 records. Migration queues a normal checkpoint, which writes v2 to
+the alternate NVS key and retains the old record as a fallback. Failed writes
+leave migration pending. Unknown/newer versions on either key block all writes.
 
 The old `altoids-pet` namespace remains untouched. Migration reads the supported
 old `state0`/`state1` or original `state` record and copies **only the birthday**;
@@ -218,10 +225,21 @@ not the committed journal.
 
 Gear is cosmetic, with no bonuses or care requirements. Unlock flags use bit
 `ID - 1`; discovery flags use bits 0–7 in the category order above. Equipment
-starts at NONE. `equipGear()` rejects locked/invalid items and checkpoints a
-changed selection. The GEAR screen lets you browse/select equipment. The selected
-item is now drawn over the current kitsune on HOME, FOCUS, and DONE. Existing
-weather umbrella/scarf reactions continue independently.
+starts at NONE in each of HEAD, FACE, NECK, BODY, FEET and PROP.
+`equipGear(slot, gear)` rejects locked, invalid, or incompatible items and
+checkpoints only changed selections. Equipping replaces only that slot.
+
+| Slot | Compatible gear |
+| --- | --- |
+| HEAD | FIELD_CAP |
+| FACE | SUNGLASSES |
+| NECK | WINTER_SCARF |
+| BODY | RAINCOAT, WINTER_COAT |
+| FEET | BOOTS |
+| PROP | UMBRELLA |
+
+All equipped items draw over the current kitsune on HOME, FOCUS and DONE.
+Existing weather umbrella/scarf reactions continue independently.
 
 ### Cosmetic overlay layer
 
@@ -231,14 +249,14 @@ occlusion masks for the cap, umbrella, coats, scarf, and boots. Each bitmap is
 contain no duplicate pet frames. Sunglasses are outline-only and leave the
 existing eye interiors visible for blink/look expressions.
 
-`gear_overlay.cpp` reads `getBuddySave().equippedGear` without mutating progress.
+`gear_overlay.cpp` reads `getBuddySave().equippedSlots` without mutating progress.
 NONE, invalid IDs, or unavailable/protected saves draw nothing. The layer reuses
 the existing 2× bitmap expansion and three-row torso-crouch transform. Masks
 paint only local covered pixels black in RAM, followed by white accessory pixels;
 transparent pixels do not erase the background. No new framebuffer or display
 transfer is introduced.
 
-Layer order is weather background → base kitsune → equipped gear → weather
+Layer order is weather background → base kitsune → BODY → FEET → NECK → HEAD → FACE → PROP → weather
 reaction accessories → heart/focus book. Gear follows the already-computed
 B hop, idle bounce, snow shiver, and DONE offsets. Boots also follow the bounce
 sprite's lifted paws. The hat/glasses remain rigid during the ear-tip twitch;
@@ -276,11 +294,12 @@ C from the menu retains its existing return-home behavior.
 - **RECORDS:** Shows highest/lowest temperatures to a tenth Fahrenheit with their
   Central dates/times. A and B have no action. With no observations, it shows an
   explicit waiting message rather than zero-temperature records.
-- **GEAR:** Opens at the equipped item. A cycles NONE and the seven gear IDs,
-  including locked items. Each displays EQUIPPED, UNLOCKED, or LOCKED, plus its
-  requirement. B equips an unlocked choice; NONE removes equipment. Locked
-  choices cannot be equipped. SAVE FAILED leaves the previous equipment intact.
-  Selecting an already-equipped item does not write NVS again.
+- **GEAR:** Opens a six-slot overview showing the equipped item in each slot.
+  A cycles slots; B opens the selected slot. Within a slot, A cycles NONE and
+  compatible unlocked items; B equips the highlighted choice. NONE removes only
+  that slot. C returns to the overview, then C returns to the menu. SAVE FAILED
+  leaves equipment intact. Selecting an already-equipped item does not write
+  NVS again. With no compatible unlocks, the slot offers only NONE.
 
 Viewing pages does not award observations, fetch weather, write progress, or
 play new sounds. Equipment selection uses the existing verified NVS hook and
@@ -301,6 +320,18 @@ serialize all permanent fields, including a canonical-payload FNV-1a checksum
 written as eight hexadecimal characters. It detects accidental corruption; it
 is not an authentication mechanism. JSON uses tenths Fahrenheit regardless of
 future display units and contains no Wi-Fi credentials or weather cache.
+
+Version 2 JSON replaces `equippedGear` with all six numeric slot IDs:
+
+```json
+"equippedSlots": {"HEAD": 1, "FACE": 2, "NECK": 5, "BODY": 4, "FEET": 7, "PROP": 3}
+```
+
+IDs remain unchanged; 0 means NONE. Import requires all six slots, compatible
+unlocked items, and a matching checksum. Version 1 JSON backups are also accepted:
+their original v1 checksum is verified before migrating the item and upgrading
+to v2. Use the confirmation checksum printed by staging, which describes the
+migrated v2 buddy. Newer/unknown versions are rejected without writes.
 
 ```text
 EXPORT_BUDDY
@@ -454,9 +485,14 @@ On the physical device:
 - Open RECORDS and check positive/negative temperatures and dates against JSON.
   Check empty-journal messages using the host tests or a deliberately confirmed
   test import after exporting your real buddy.
-- Browse all eight GEAR choices. Verify locked-item rejection, equip an unlocked
-  item, select NONE to remove it, and reopen the screen to check EQUIPPED status.
-  Reboot/reflash with normal NVS preservation and verify the selection persists.
+- Export Buddy before updating, then upload with the existing partition scheme
+  and flash erase disabled. Verify the v1 equipped item moves to its correct
+  slot, and Journal/Records/unlocks/start date remain unchanged.
+- Browse all six Gear slots. Equip multiple unlocked items; switch BODY between
+  coats and verify other slots remain equipped. Set one slot to NONE and verify
+  only it clears. Check A cycles once per press and C backs out one level.
+  Deep-sleep/wake and unplug/reconnect; verify every slot persists. Export and
+  confirmed-import a backup and compare all six slots and existing progress.
 - Return HOME after equipping each unlocked item: check its outline, mask and
   face/ear/tail alignment. Check blink/look visibility with glasses, hops and
   lifted boots, snow shiver, storm crouch, and sleeping appearance. With umbrella

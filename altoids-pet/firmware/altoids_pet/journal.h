@@ -15,7 +15,7 @@ void checkpointJournal(bool beforeSleep = false);
 const BuddySaveData &getBuddySave();
 bool journalAvailable();
 bool recordWeatherObservation(const WeatherObservation &observation);
-bool equipJournalGear(GearId gear);
+bool equipJournalGear(GearSlot slot, GearId gear);
 
 // USB Serial foundation; staging never writes. Confirmation commits to NVS
 // before replacing the runtime buddy. Import is the explicit replacement path.

@@ -1,16 +1,11 @@
 #include "gear_overlay.h"
 #include "gear_sprites.h"
+#include "gear.h"
 #include "journal.h"
 #include "display.h"
 
-void drawEquippedGear(int x, int y, bool crouching, bool liftedFeet,
-                      GearId foregroundAccessory) {
-  // Never display an unread/unsupported save's equipment.
-  if (!journalAvailable()) return;
-  // The existing weather animation temporarily supplies the same accessory.
-  // Keep its animation visible without drawing two umbrellas/scarves.
-  GearId equipped = getBuddySave().equippedGear;
-  if (equipped == foregroundAccessory) return;
+namespace {
+void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet) {
   const uint8_t *art = nullptr;
   const uint8_t *mask = nullptr;
   switch (equipped) {
@@ -37,4 +32,17 @@ void drawEquippedGear(int x, int y, bool crouching, bool liftedFeet,
   // use the base's exact 2x bitmap expansion and body-crouch row mapping.
   if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, SH110X_BLACK);
   drawKitsuneSprite(art, x, y, 0, crouching);
+}
+
+} // namespace
+void drawEquippedGear(int x, int y, bool crouching, bool liftedFeet, GearId foregroundAccessory) {
+  if (!journalAvailable()) return;
+  const GearSlot order[] = {GearSlot::BODY, GearSlot::FEET, GearSlot::NECK,
+                            GearSlot::HEAD, GearSlot::FACE, GearSlot::PROP};
+  for (GearSlot slot : order) {
+    GearId gear = getBuddySave().equippedSlots[static_cast<uint8_t>(slot)];
+    // Weather supplies its animated accessory above clothing, without duplicates.
+    if (gear != foregroundAccessory && gearFitsSlot(gear, slot))
+      drawGearItem(gear, x, y, crouching, liftedFeet);
+  }
 }

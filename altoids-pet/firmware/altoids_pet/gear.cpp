@@ -49,6 +49,26 @@ void evaluateGearUnlocks(BuddySaveData &data) {
   data.unlockedGear |= eligibleGear(data);
 }
 
-bool equipGear(GearId gear) {
-  return equipJournalGear(gear);
+GearSlot gearSlot(GearId gear) {
+  switch (gear) {
+    case GearId::FIELD_CAP: return GearSlot::HEAD;
+    case GearId::SUNGLASSES: return GearSlot::FACE;
+    case GearId::WINTER_SCARF: return GearSlot::NECK;
+    case GearId::RAINCOAT: case GearId::WINTER_COAT: return GearSlot::BODY;
+    case GearId::BOOTS: return GearSlot::FEET;
+    case GearId::UMBRELLA: return GearSlot::PROP;
+    default: return GearSlot::COUNT;
+  }
+}
+const char *gearSlotName(GearSlot slot) {
+  const char *names[] = {"HEAD", "FACE", "NECK", "BODY", "FEET", "PROP"};
+  uint8_t id = static_cast<uint8_t>(slot);
+  return id < GEAR_SLOT_COUNT ? names[id] : "UNKNOWN";
+}
+bool gearFitsSlot(GearId gear, GearSlot slot) {
+  return static_cast<uint8_t>(slot) < GEAR_SLOT_COUNT &&
+         (gear == GearId::NONE || gearSlot(gear) == slot);
+}
+bool equipGear(GearSlot slot, GearId gear) {
+  return equipJournalGear(slot, gear);
 }

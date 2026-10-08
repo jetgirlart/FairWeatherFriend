@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-constexpr uint32_t SAVE_VERSION = 1;
+constexpr uint32_t SAVE_VERSION = 2;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -15,6 +15,9 @@ enum class GearId : uint8_t {
   NONE = 0, FIELD_CAP = 1, SUNGLASSES = 2, UMBRELLA = 3, RAINCOAT = 4,
   WINTER_SCARF = 5, WINTER_COAT = 6, BOOTS = 7
 };
+
+enum class GearSlot : uint8_t { HEAD, FACE, NECK, BODY, FEET, PROP, COUNT };
+constexpr uint8_t GEAR_SLOT_COUNT = static_cast<uint8_t>(GearSlot::COUNT);
 
 struct BuddySaveData {
   uint32_t saveVersion = SAVE_VERSION;
@@ -33,12 +36,12 @@ struct BuddySaveData {
   uint64_t weatherCounts[WEATHER_CATEGORY_COUNT] = {};
   uint32_t discoveredWeather = 0; // Bit n corresponds to WeatherCategory n.
   uint32_t unlockedGear = 0;     // Bit (GearId - 1), NONE has no bit.
-  GearId equippedGear = GearId::NONE;
+  GearId equippedSlots[GEAR_SLOT_COUNT] = {};
 };
 
 // Only permanent fields are serialized, explicitly as little-endian values.
 // Never persist this native C++ struct/padding or animation/cache structures.
-enum class SaveLoadResult { LOADED, NEW_BUDDY, MIGRATED_PET, PROTECTED, UNAVAILABLE };
+enum class SaveLoadResult { LOADED, MIGRATED_SAVE, NEW_BUDDY, MIGRATED_PET, PROTECTED, UNAVAILABLE };
 SaveLoadResult loadBuddySave(BuddySaveData &data);
 bool buddySaveWritable();
 bool persistBuddySave(const BuddySaveData &data);

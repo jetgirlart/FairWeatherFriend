@@ -68,6 +68,7 @@ void initializeJournal() {
   retryPending = false; importPending = false;
   serialLength = 0; serialOverflow = false;
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
+                       result == SaveLoadResult::MIGRATED_SAVE ? "NVS v1 (slot migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
                        result == SaveLoadResult::NEW_BUDDY ? "newly initialized" : "protected/unavailable NVS";
   Serial.printf("Field Journal loaded from %s: observations %llu, days %lu, research began %lld\n",
@@ -151,12 +152,12 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   return true;
 }
 
-bool equipJournalGear(GearId gear) {
-  if (!available || static_cast<uint8_t>(gear) > 7 ||
+bool equipJournalGear(GearSlot slot, GearId gear) {
+  if (!available || !gearFitsSlot(gear, slot) ||
       (gear != GearId::NONE && !(buddy.unlockedGear & gearFlag(gear)))) return false;
-  if (gear == buddy.equippedGear) return true;
+  if (gear == buddy.equippedSlots[static_cast<uint8_t>(slot)]) return true;
   // Commit first so a failed selection does not replace the equipped item.
-  BuddySaveData next = buddy; next.equippedGear = gear;
+  BuddySaveData next = buddy; next.equippedSlots[static_cast<uint8_t>(slot)] = gear;
   if (!persistBuddySave(next)) return false;
   buddy = next; dirty = false; retryPending = false;
   return true;

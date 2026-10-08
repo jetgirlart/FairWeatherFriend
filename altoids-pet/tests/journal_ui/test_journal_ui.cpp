@@ -56,30 +56,44 @@ int main() {
  openJournalScreen(JOURNAL_SCREEN);assert(shown("1") && shown("WEATHER TYPES 1/8"));
  nextPage();assert(shown("SNOW") && shown("CODE 71") && shown("-0.1 F"));
  nextPage();assert(discoveryDots==0);nextPage();assert(discoveryDots==1);
- openJournalScreen(GEAR_SCREEN);assert(shown("NONE") && shown("EQUIPPED"));
- writes=nvsWrites;handleJournalButtons(false,true,false);assert(nvsWrites==writes); // NONE already selected.
- nextPage();assert(shown("FIELD CAP") && shown("UNLOCKED"));
- handleJournalButtons(false,true,false);assert(getBuddySave().equippedGear==GearId::FIELD_CAP && nvsWrites==writes+1 && shown("EQUIPPED"));
- handleJournalButtons(false,true,false);assert(nvsWrites==writes+1); // No duplicate equipment write.
- nextPage();assert(shown("SUNGLASSES") && shown("LOCKED"));
- handleJournalButtons(false,true,false);assert(nvsWrites==writes+1 && getBuddySave().equippedGear==GearId::FIELD_CAP);
- nextPage();assert(shown("UMBRELLA") && shown("LOCKED"));
- nextPage();assert(shown("RAINCOAT") && shown("10 rain observations"));
- nextPage();assert(shown("WINTER SCARF") && shown("UNLOCKED"));
- failWrite=true;handleJournalButtons(false,true,false);assert(shown("SAVE FAILED") && getBuddySave().equippedGear==GearId::FIELD_CAP);
- failWrite=false;handleJournalButtons(false,true,false);assert(shown("EQUIPPED") && getBuddySave().equippedGear==GearId::WINTER_SCARF);
- nextPage();assert(shown("WINTER COAT") && shown("LOCKED"));
- nextPage();assert(shown("BOOTS") && shown("UNLOCKED"));
- nextPage();handleJournalButtons(false,true,false);assert(getBuddySave().equippedGear==GearId::NONE);
- initializeJournal();assert(getBuddySave().equippedGear==GearId::NONE);
- openJournalScreen(GEAR_SCREEN);nextPage();handleJournalButtons(false,true,false);
- initializeJournal();assert(getBuddySave().equippedGear==GearId::FIELD_CAP);
- openJournalScreen(GEAR_SCREEN);assert(shown("FIELD CAP") && shown("EQUIPPED"));
+ openJournalScreen(GEAR_SCREEN);assert(shown("A:NEXT B:OPEN"));
+ auto pressB=[](){handleJournalButtons(false,true,false);};
+ auto pressC=[](){handleJournalButtons(false,false,true);};
+ writes=nvsWrites;pressB();assert(shown("HEAD") && shown("NONE") && shown("EQUIPPED"));
+ pressB();assert(nvsWrites==writes);nextPage();assert(shown("FIELD CAP"));
+ pressB();assert(getBuddySave().equippedSlots[0]==GearId::FIELD_CAP && nvsWrites==writes+1);
+ pressB();assert(nvsWrites==writes+1);pressC();nextPage();pressB();
+ nextPage();assert(shown("NONE")); // No FACE items unlocked: excludes locked glasses.
+ pressC();nextPage();pressB();nextPage();assert(shown("WINTER SCARF"));
+ failWrite=true;pressB();assert(shown("SAVE FAILED") && getBuddySave().equippedSlots[2]==GearId::NONE);
+ failWrite=false;pressB();assert(shown("EQUIPPED") && getBuddySave().equippedSlots[2]==GearId::WINTER_SCARF);
+ assert(getBuddySave().equippedSlots[0]==GearId::FIELD_CAP);
+ nextPage();pressB();assert(getBuddySave().equippedSlots[2]==GearId::NONE);
+ initializeJournal();assert(getBuddySave().equippedSlots[0]==GearId::FIELD_CAP);
+ openJournalScreen(GEAR_SCREEN);pressB();assert(shown("FIELD CAP") && shown("EQUIPPED"));
  // Successful import while a screen is open refreshes it once, with no polling writes.
  BuddySaveData imported;imported.createdAt=fakeEpoch;
  Print json;assert(serializeBuddySave(imported,json));
  assert(importBuddy(json.output.c_str(),json.output.size()));assert(confirmBuddyImport(buddySaveChecksum(imported)));
- fakeMillis+=250;updateJournalScreens();assert(shown("LOCKED")); // Field cap not unlocked in replacement buddy.
+ fakeMillis+=250;updateJournalScreens();assert(shown("NONE")); // Open submenu reconciles selection after import.
+ // Fully unlocked outfit: all slot transitions, BODY replacement and single-slot NONE.
+ for(int i=0;i<10;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,700,61,WeatherCategory::RAIN}));}
+ for(int i=0;i<5;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,310,71,WeatherCategory::SNOW}));}
+ fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,700,0,WeatherCategory::CLEAR}));
+ openJournalScreen(GEAR_SCREEN);
+ const GearId expected[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,
+                          GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
+ for(uint8_t slot=0;slot<6;++slot) {
+   assert(selectedSlot==static_cast<GearSlot>(slot));pressB();nextPage();pressB();
+   assert(getBuddySave().equippedSlots[slot]==expected[slot]);pressC();nextPage();
+ }
+ // HEAD wraps after PROP. Move to BODY and cycle raincoat -> winter coat.
+ nextPage();nextPage();nextPage();pressB();nextPage();pressB();
+ assert(getBuddySave().equippedSlots[3]==GearId::WINTER_COAT);
+ for(uint8_t slot=0;slot<6;++slot)if(slot!=3)assert(getBuddySave().equippedSlots[slot]==expected[slot]);
+ nextPage();pressB();assert(getBuddySave().equippedSlots[3]==GearId::NONE);
+ pressC();pressC();assert(currentScreen==MENU);
+ initializeJournal();for(uint8_t slot=0;slot<6;++slot)assert(getBuddySave().equippedSlots[slot]==(slot==3?GearId::NONE:expected[slot]));
  // Full-width counters, negative/large temperatures and record dates stay in bounds.
  buddy=BuddySaveData{};buddy.createdAt=fakeEpoch;buddy.totalObservations=UINT64_MAX;buddy.uniqueDaysObserved=UINT32_MAX;
  buddy.latestObservationAt=fakeEpoch;buddy.lastObservedDate=localDate(fakeEpoch);buddy.latestTemperatureDeciF=-2000;

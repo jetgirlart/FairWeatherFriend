@@ -8,6 +8,8 @@
 namespace {
 uint8_t journalPage = 0;
 GearId selectedGear = GearId::NONE;
+GearSlot selectedSlot = GearSlot::HEAD;
+bool choosingItem = false;
 bool equipmentSaveFailed = false;
 uint32_t displayedChecksum = 0;
 bool displayedAvailable = false;
@@ -151,21 +153,33 @@ void gearRequirement(GearId gear) {
     case GearId::BOOTS: centered(79, "First below-freezing"); centered(91, "observation"); break;
   }
 }
+bool selectable(GearId gear) {
+  return gearFitsSlot(gear, selectedSlot) &&
+         (gear == GearId::NONE || (getBuddySave().unlockedGear & gearFlag(gear)));
+}
 void drawGear() {
   beginScreen("GEAR");
   if (!unavailable()) {
     const BuddySaveData &data = getBuddySave();
-    uint8_t id = static_cast<uint8_t>(selectedGear);
-    char text[16];
-    snprintf(text, sizeof(text), "ITEM %u/8", unsigned(id + 1));
-    textAt(4, 27, text);
-    centered(40, gearLabels[id], 2);
-    bool unlocked = selectedGear == GearId::NONE || (data.unlockedGear & gearFlag(selectedGear));
-    centered(61, equipmentSaveFailed ? "SAVE FAILED" :
-                 selectedGear == data.equippedGear ? "EQUIPPED" : unlocked ? "UNLOCKED" : "LOCKED");
-    gearRequirement(selectedGear);
-    centered(108, "A:NEXT B:EQUIP");
-    centered(120, "C:MENU");
+    if (!choosingItem) {
+      for (uint8_t i = 0; i < GEAR_SLOT_COUNT; ++i) {
+        char row[22];
+        snprintf(row, sizeof(row), "%s %-4s %s", i == static_cast<uint8_t>(selectedSlot) ? ">" : " ",
+                 gearSlotName(static_cast<GearSlot>(i)), gearLabels[static_cast<uint8_t>(data.equippedSlots[i])]);
+        textAt(0, 29 + i * 12, row);
+      }
+      centered(108, "A:NEXT B:OPEN");
+      centered(120, "C:MENU");
+    } else {
+      if (!selectable(selectedGear)) selectedGear = GearId::NONE;
+      centered(27, gearSlotName(selectedSlot));
+      centered(40, gearLabels[static_cast<uint8_t>(selectedGear)], 2);
+      centered(61, equipmentSaveFailed ? "SAVE FAILED" :
+                   selectedGear == data.equippedSlots[static_cast<uint8_t>(selectedSlot)] ? "EQUIPPED" : "UNLOCKED");
+      gearRequirement(selectedGear);
+      centered(108, "A:NEXT B:EQUIP");
+      centered(120, "C:SLOTS");
+    }
   }
   finishScreen();
 }
@@ -183,7 +197,9 @@ void openJournalScreen(ScreenMode screen) {
   if (screen != JOURNAL_SCREEN && screen != RECORDS_SCREEN && screen != GEAR_SCREEN) return;
   currentScreen = screen;
   journalPage = 0;
-  selectedGear = getBuddySave().equippedGear;
+  selectedSlot = GearSlot::HEAD;
+  choosingItem = false;
+  selectedGear = GearId::NONE;
   equipmentSaveFailed = false;
   drawCurrent();
 }
@@ -193,15 +209,26 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
   if (aPressed) {
     if (currentScreen == JOURNAL_SCREEN) { journalPage = (journalPage + 1) % 4; redraw = true; }
     if (currentScreen == GEAR_SCREEN && journalAvailable()) {
-      selectedGear = static_cast<GearId>((static_cast<uint8_t>(selectedGear) + 1) % 8);
+      if (!choosingItem) selectedSlot = static_cast<GearSlot>((static_cast<uint8_t>(selectedSlot) + 1) % GEAR_SLOT_COUNT);
+      else {
+        do { selectedGear = static_cast<GearId>((static_cast<uint8_t>(selectedGear) + 1) % 8); }
+        while (!selectable(selectedGear)); // NONE always terminates the search.
+      }
       equipmentSaveFailed = false; redraw = true;
     }
   }
   if (bPressed && currentScreen == GEAR_SCREEN && journalAvailable()) {
-    bool unlocked = selectedGear == GearId::NONE || (getBuddySave().unlockedGear & gearFlag(selectedGear));
-    if (unlocked) { equipmentSaveFailed = !equipGear(selectedGear); redraw = true; }
+    if (!choosingItem) {
+      choosingItem = true;
+      selectedGear = getBuddySave().equippedSlots[static_cast<uint8_t>(selectedSlot)];
+    } else if (selectable(selectedGear)) equipmentSaveFailed = !equipGear(selectedSlot, selectedGear);
+    redraw = true;
   }
-  if (cPressed) { currentScreen = MENU; drawMenu(); }
+  if (cPressed) {
+    if (currentScreen == GEAR_SCREEN && choosingItem) {
+      choosingItem = false; equipmentSaveFailed = false; drawGear();
+    } else { currentScreen = MENU; drawMenu(); }
+  }
   else if (redraw) drawCurrent();
   return true;
 }

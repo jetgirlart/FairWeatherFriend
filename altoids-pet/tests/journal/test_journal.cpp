@@ -34,6 +34,24 @@ void observe(int code=0,int temperature=700,int seconds=3600) {
 }
 std::string exported() { Print p;assert(exportBuddy(p));return p.output; }
 void send(const std::string &line) { for(char c:line)Serial.input.push_back(c);Serial.input.push_back('\n');while(Serial.available())updateBuddySerial(); }
+// Frozen v1 field order: independent fixture for the installed single-item save.
+std::vector<uint8_t> oldPayload(const BuddySaveData &s, GearId gear) {
+ std::vector<uint8_t> bytes(148);uint8_t *p=bytes.data();
+ put32(p,1);put64(p,s.createdAt);put64(p,s.totalObservations);put32(p,s.uniqueDaysObserved);
+ put64(p,s.latestObservationAt);put32(p,s.lastObservedDate);put32(p,s.latestTemperatureDeciF);
+ put32(p,s.latestWeatherCode);put32(p,static_cast<uint8_t>(s.latestCategory));
+ put32(p,s.highestTemperatureDeciF);put64(p,s.highestTemperatureAt);
+ put32(p,s.lowestTemperatureDeciF);put64(p,s.lowestTemperatureAt);
+ for(auto count:s.weatherCounts)put64(p,count);
+ put32(p,s.discoveredWeather);put32(p,s.unlockedGear);put32(p,static_cast<uint8_t>(gear));
+ assert(p==bytes.data()+148);return bytes;
+}
+std::vector<uint8_t> oldRecord(const BuddySaveData &s, GearId gear, uint64_t gen) {
+ auto payload=oldPayload(s,gear);std::vector<uint8_t> bytes(172);uint8_t *p=bytes.data();
+ put32(p,SAVE_MAGIC);put32(p,1);put32(p,148);put64(p,gen);
+ memcpy(bytes.data()+24,payload.data(),148);
+ put32(p,hashBytes(payload.data(),148,hashBytes(bytes.data(),20)));return bytes;
+}
 int main() {
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  blank(); checkpointJournal();assert(nvsWrites==1 && getBuddySave().createdAt==fakeEpoch);
@@ -58,9 +76,17 @@ int main() {
  for(int i=0;i<5;i++)observe(71,310);
  assert(getBuddySave().weatherCounts[6]==5 && (getBuddySave().unlockedGear&gearFlag(GearId::WINTER_COAT)));
  assert(getBuddySave().unlockedGear&gearFlag(GearId::BOOTS));
- assert(!equipGear(static_cast<GearId>(99))); assert(equipGear(GearId::FIELD_CAP));
- writes=nvsWrites; assert(equipGear(GearId::FIELD_CAP)&&nvsWrites==writes);
- assert(equipGear(GearId::NONE));
+ assert(!equipGear(GearSlot::HEAD, static_cast<GearId>(99))); assert(equipGear(GearSlot::HEAD, GearId::FIELD_CAP));
+ writes=nvsWrites; assert(equipGear(GearSlot::HEAD, GearId::FIELD_CAP)&&nvsWrites==writes);
+ assert(equipGear(GearSlot::HEAD, GearId::NONE));
+ // Equip all slots, replace only BODY, reject wrong-slot and locked selections.
+ for(uint8_t id=1;id<=7;++id)assert(equipGear(gearSlot(static_cast<GearId>(id)),static_cast<GearId>(id)));
+ auto outfit=getBuddySave();assert(outfit.equippedSlots[3]==GearId::WINTER_COAT);
+ assert(equipGear(GearSlot::BODY,GearId::RAINCOAT));
+ for(uint8_t i=0;i<6;++i)if(i!=3)assert(getBuddySave().equippedSlots[i]==outfit.equippedSlots[i]);
+ writes=nvsWrites;assert(!equipGear(GearSlot::HEAD,GearId::RAINCOAT));
+ assert(!equipGear(GearSlot::COUNT,GearId::NONE) && nvsWrites==writes);
+ initializeJournal();assert(getBuddySave().equippedSlots[3]==GearId::RAINCOAT);
  auto saved=getBuddySave();std::string json=exported();
  BuddySaveData restored;const char *error=nullptr;
  assert(deserializeBuddySave(json.c_str(),json.size(),restored,error));
@@ -68,7 +94,7 @@ int main() {
  // JSON corruption, missing/type-invalid fields, inconsistent counters and unsupported versions.
  JsonDocument doc;assert(!deserializeJson(doc,json));doc["totalObservations"]=999;
  std::string bad;serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
- assert(!deserializeJson(doc,json));doc["saveVersion"]=2;bad.clear();serializeJson(doc,bad);
+ assert(!deserializeJson(doc,json));doc["saveVersion"]=3;bad.clear();serializeJson(doc,bad);
  assert(!importBuddy(bad.c_str(),bad.size()));assert(buddySaveChecksum(saved)==buddySaveChecksum(getBuddySave()));
  assert(!deserializeJson(doc,json));doc.remove("researchBeganAt");bad.clear();serializeJson(doc,bad);
  assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
@@ -79,7 +105,7 @@ int main() {
  invalid=saved;invalid.lastObservedDate=20260101;assert(!validateBuddySave(invalid));
  invalid=saved;invalid.highestTemperatureAt=invalid.latestObservationAt+1;assert(!validateBuddySave(invalid));
  invalid=saved;invalid.weatherCounts[0]=UINT64_MAX;assert(!validateBuddySave(invalid));
- invalid=saved;invalid.equippedGear=static_cast<GearId>(9);assert(!validateBuddySave(invalid));
+ invalid=saved;invalid.equippedSlots[0]=static_cast<GearId>(9);assert(!validateBuddySave(invalid));
  // Staging writes nothing; checksum confirmation, cancel and expiry protect existing buddy.
  writes=nvsWrites;assert(importBuddy(json.c_str(),json.size()));assert(nvsWrites==writes);
  assert(!confirmBuddyImport(0));cancelBuddyImport();assert(!confirmBuddyImport(buddySaveChecksum(saved)));
@@ -93,6 +119,42 @@ int main() {
  assert(confirmBuddyImport(buddySaveChecksum(other)));initializeJournal();
  assert(getBuddySave().createdAt==other.createdAt && getBuddySave().totalObservations==0);
  assert(importBuddy(json.c_str(),json.size()));assert(confirmBuddyImport(buddySaveChecksum(saved)));
+ // Every old equipped ID (including NONE) migrates without changing progress.
+ auto migrationStorage=storage;
+ for(uint8_t id=0;id<=7;++id) {
+   GearId gear=static_cast<GearId>(id);auto record=oldRecord(saved,gear,9);
+   storage.clear();storage["fwf-buddy"]["save1"]=record;
+   initializeJournal();assert(journalAvailable() && dirty && generation==9);
+   auto migrated=getBuddySave();assert(migrated.saveVersion==2);
+   auto expected=saved;for(auto &item:expected.equippedSlots)item=GearId::NONE;
+   if(id)expected.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
+   assert(buddySaveChecksum(migrated)==buddySaveChecksum(expected));
+   failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==record);
+   failWrite=false;checkpointJournal(true);assert(!dirty && generation==10);
+   assert(storage["fwf-buddy"]["save1"]==record); // Valid v1 fallback kept intact.
+   initializeJournal();assert(!dirty && buddySaveChecksum(getBuddySave())==buddySaveChecksum(expected));
+   storage["fwf-buddy"]["save0"].back()^=1;
+   initializeJournal();assert(dirty && buddySaveChecksum(getBuddySave())==buddySaveChecksum(expected));
+   // Old JSON checksum must be verified using v1 bytes, then upgrade for confirmation.
+   JsonDocument oldJson;assert(!deserializeJson(oldJson,json));oldJson["saveVersion"]=1;
+   oldJson.remove("equippedSlots");oldJson["equippedGear"]=id;
+   auto payload=oldPayload(saved,gear);char hash[9];snprintf(hash,9,"%08lx",(unsigned long)hashBytes(payload.data(),payload.size()));
+   oldJson["checksum"]=hash;std::string backup;serializeJson(oldJson,backup);
+   assert(deserializeBuddySave(backup.c_str(),backup.size(),restored,error));
+   assert(buddySaveChecksum(restored)==buddySaveChecksum(expected));
+   oldJson["equippedGear"]=(id+1)%8;backup.clear();serializeJson(oldJson,backup);
+   assert(!deserializeBuddySave(backup.c_str(),backup.size(),restored,error));
+ }
+ storage=migrationStorage;initializeJournal();
+ // V2 JSON requires all slots and rejects incompatible/locked gear and wrong types.
+ for(int scenario=0;scenario<4;++scenario) {
+   assert(!deserializeJson(doc,json));
+   if(scenario==0)doc["equippedSlots"].remove("PROP");
+   if(scenario==1)doc["equippedSlots"]["HEAD"]=4;
+   if(scenario==2)doc["equippedSlots"]["HEAD"]=true;
+   if(scenario==3)doc["equippedSlots"]["EXTRA"]=0;
+   bad.clear();serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
+ }
  // Failed writes leave earlier checkpoint valid; rate-limited retry and sleep checkpoint.
  failWrite=true;observe(45,500);auto pending=getBuddySave();writes=nvsWrites;
  for(int i=0;i<10;i++) {fakeMillis+=1000;updateJournal();}assert(nvsWrites==writes);
@@ -106,7 +168,7 @@ int main() {
  const char *latestKey=generation%2?"save1":"save0";storage["fwf-buddy"][latestKey].back()^=1;
  initializeJournal();assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(previous));
  // Unknown version on either slot locks all writes, including import/equipment.
- storage["fwf-buddy"][latestKey][4]=2;auto protectedStorage=storage;
+ storage["fwf-buddy"][latestKey][4]=3;auto protectedStorage=storage;
  initializeJournal();assert(!journalAvailable());
  assert(!recordWeatherObservation({fakeEpoch+3600,700,0,WeatherCategory::CLEAR}));
  assert(!importBuddy(json.c_str(),json.size()));checkpointJournal(true);assert(storage==protectedStorage);
