@@ -1,6 +1,7 @@
 #include "sound.h"
 #include "config.h"
 #include "pet.h"
+#include "journal.h"
 #include <esp32-hal-ledc.h>
 #include <stdint.h>
 
@@ -8,9 +9,6 @@
 // config.example.h to customize them; this module never touches credentials.
 #ifndef PIEZO_PIN
 #define PIEZO_PIN D3
-#endif
-#ifndef SOUND_ENABLED
-#define SOUND_ENABLED true
 #endif
 #ifndef SOUND_STARTUP_CHIRP
 #define SOUND_STARTUP_CHIRP false
@@ -29,7 +27,7 @@ uint32_t stepStarted = 0;
 uint32_t lastPetChirp = 0;
 bool hadPetChirp = false;
 bool initialized = false;
-bool enabled = SOUND_ENABLED;
+bool enabled = true;
 bool attached = false;
 Cue cue = Cue::NONE;
 
@@ -60,7 +58,7 @@ bool playStep() {
 }
 
 void beginCue(Cue next, const ToneStep *notes, uint8_t count) {
-  if (!initialized || !enabled || (!SOUND_ENABLED)) return;
+  if (!initialized || !enabled || (!getBuddySave().soundEnabled)) return;
   if (next != Cue::TIMER && isPetSleeping()) return;
   if (cue == Cue::TIMER || (cue != Cue::NONE && next <= cue)) return;
   stopSound();
@@ -75,7 +73,7 @@ void beginCue(Cue next, const ToneStep *notes, uint8_t count) {
 
 void initializeSound() {
   initialized = true;
-  enabled = SOUND_ENABLED;
+  enabled = true;
   hadPetChirp = false;
   stopSound();
 }
@@ -88,7 +86,7 @@ void stopSound() {
 }
 
 void soundPetInteraction() {
-  if (!initialized || !enabled || isPetSleeping() || cue == Cue::TIMER) return;
+  if (!initialized || !enabled || !getBuddySave().soundEnabled || isPetSleeping() || cue == Cue::TIMER) return;
   uint32_t now = static_cast<uint32_t>(millis());
   if (hadPetChirp && now - lastPetChirp < 1000) return;
   beginCue(Cue::PET, PET_CHIRP, 1);
@@ -108,7 +106,7 @@ void soundStartup() {
 
 void updateSound() {
   if (!initialized || cue == Cue::NONE) return;
-  if (!enabled || !SOUND_ENABLED || (cue != Cue::TIMER && isPetSleeping())) {
+  if (!enabled || !getBuddySave().soundEnabled || (cue != Cue::TIMER && isPetSleeping())) {
     stopSound();
     return;
   }

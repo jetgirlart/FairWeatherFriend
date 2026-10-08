@@ -9,6 +9,8 @@
 SerialType Serial;
 unsigned long fakeMillis=0;
 bool timeValid=true;
+unsigned invalidations=0;
+void invalidateWeatherLocation(){invalidations++;}
 time_t fakeEpoch=1800000000;
 extern "C" time_t time(time_t *p) { if(p)*p=fakeEpoch; return fakeEpoch; }
 std::map<std::string,Entries> storage;
@@ -101,7 +103,7 @@ int main() {
  // JSON corruption, missing/type-invalid fields, inconsistent counters and unsupported versions.
  JsonDocument doc;assert(!deserializeJson(doc,json));doc["totalObservations"]=999;
  std::string bad;serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
- assert(!deserializeJson(doc,json));doc["saveVersion"]=4;bad.clear();serializeJson(doc,bad);
+ assert(!deserializeJson(doc,json));doc["saveVersion"]=999;bad.clear();serializeJson(doc,bad);
  assert(!importBuddy(bad.c_str(),bad.size()));assert(buddySaveChecksum(saved)==buddySaveChecksum(getBuddySave()));
  assert(!deserializeJson(doc,json));doc.remove("researchBeganAt");bad.clear();serializeJson(doc,bad);
  assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
@@ -132,7 +134,7 @@ int main() {
    GearId gear=static_cast<GearId>(id);auto record=oldRecord(saved,gear,9);
    storage.clear();storage["fwf-buddy"]["save1"]=record;
    initializeJournal();assert(journalAvailable() && dirty && generation==9);
-   auto migrated=getBuddySave();assert(migrated.saveVersion==3);
+   auto migrated=getBuddySave();assert(migrated.saveVersion==SAVE_VERSION);
    auto expected=saved;expected.setupComplete=true;expected.furPalette=FurPaletteId::ORANGE;for(auto &item:expected.equippedSlots)item=GearId::NONE;
    if(id)expected.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
    assert(buddySaveChecksum(migrated)==buddySaveChecksum(expected));
@@ -189,6 +191,25 @@ int main() {
    if(scenario==3)doc["setupComplete"]=1;
    bad.clear();serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
  }
+ // Independent v3 fixture retains palette/setup and every progress field.
+ auto beforeV3Storage=storage; auto v3Buddy=getBuddySave();
+ v3Buddy.furPalette=FurPaletteId::BLUE;v3Buddy.setupComplete=true;
+ uint8_t full[PAYLOAD_BYTES];encodeCurrent(v3Buddy,full);uint8_t *ver=full;put32(ver,3);
+ std::vector<uint8_t> v3(200);uint8_t *header=v3.data();
+ put32(header,SAVE_MAGIC);put32(header,3);put32(header,176);put64(header,55);header+=4;
+ memcpy(v3.data()+24,full,176);header=v3.data()+20;
+ put32(header,hashBytes(v3.data()+24,176,hashBytes(v3.data(),20)));
+ storage.clear();storage["fwf-buddy"]["save1"]=v3;initializeJournal();
+ assert(dirty && !buddyNeedsSetup() && getBuddySave().furPalette==FurPaletteId::BLUE);
+ assert(getBuddySave().soundEnabled && getBuddySave().units==UnitsId::US && !getBuddySave().locationConfigured);
+ assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(v3Buddy));
+ checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
+ Print oldV3;assert(serializeBuddySave(v3Buddy,oldV3));assert(!deserializeJson(doc,oldV3.output));doc["saveVersion"]=3;
+ for(const char *key:{"soundEnabled","units","locationConfigured","latitudeMicrodegrees","longitudeMicrodegrees"})doc.remove(key);
+ char v3Hash[9];snprintf(v3Hash,9,"%08lx",(unsigned long)hashBytes(full,176));doc["checksum"]=v3Hash;
+ bad.clear();serializeJson(doc,bad);assert(deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
+ assert(buddySaveChecksum(restored)==buddySaveChecksum(v3Buddy));
+ storage=beforeV3Storage;initializeJournal();
  // All palettes roundtrip and preserve all existing buddy fields.
  for(uint8_t id=0;id<5;++id){
    auto colored=saved;colored.furPalette=static_cast<FurPaletteId>(id);Print output;
@@ -210,7 +231,7 @@ int main() {
  const char *latestKey=generation%2?"save1":"save0";storage["fwf-buddy"][latestKey].back()^=1;
  initializeJournal();assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(previous));
  // Unknown version on either slot locks all writes, including import/equipment.
- storage["fwf-buddy"][latestKey][4]=4;auto protectedStorage=storage;
+ storage["fwf-buddy"][latestKey][4]=99;auto protectedStorage=storage;
  initializeJournal();assert(!journalAvailable());
  assert(!recordWeatherObservation({fakeEpoch+3600,700,0,WeatherCategory::CLEAR}));
  assert(!importBuddy(json.c_str(),json.size()));checkpointJournal(true);assert(storage==protectedStorage);
@@ -251,11 +272,11 @@ int main() {
  // Serial commands are bounded and JSON must be complete, with explicit confirmation.
  blank();observe();saved=getBuddySave();json=exported();
  assert(!deserializeJson(doc,json));std::string compact;serializeJson(doc,compact);
- writes=nvsWrites;send("IMPORT_BUDDY "+compact);assert(nvsWrites==writes && importPending);
+ writes=nvsWrites;beginBuddyTransfer(true);send("IMPORT_BUDDY "+compact);assert(nvsWrites==writes && importPending);
  char command[64];snprintf(command,sizeof(command),"CONFIRM_IMPORT %08lx",(unsigned long)buddySaveChecksum(saved));
- send(command);assert(nvsWrites==writes+1);
+ send(command);assert(nvsWrites==writes && importPending);assert(confirmBuddyImport(buddySaveChecksum(saved)));assert(nvsWrites==writes+1);
  writes=nvsWrites;send(std::string(4200,'x'));assert(nvsWrites==writes && !importPending);
- Serial.output.clear();send("EXPORT_BUDDY");assert(Serial.output.find("researchBeganAt")!=std::string::npos);
+ endBuddyTransfer();Serial.output.clear();send("EXPORT_BUDDY");assert(Serial.output.find("researchBeganAt")!=std::string::npos);
  // Central date boundaries rather than UTC midnight; DST follows system TZ.
  blank();fakeEpoch=1791316800; // 2026-10-06 20:00 UTC, 15:00 Central DST.
  observe(0,700,0);auto day=getBuddySave().lastObservedDate;

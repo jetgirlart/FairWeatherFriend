@@ -26,3 +26,15 @@ bool importBuddy(const char *json, size_t length);
 bool confirmBuddyImport(uint32_t checksum);
 void cancelBuddyImport();
 void updateBuddySerial();
+
+// Settings commit immediately, only on changed values; failed writes keep runtime intact.
+bool saveBuddySound(bool enabled);
+bool saveBuddyUnits(UnitsId units);
+bool saveBuddyLocation(double latitude, double longitude);
+enum class BuddyTransferStatus : uint8_t {
+  NONE, EXPORT_COMPLETE, EXPORT_FAILED, IMPORT_READY, IMPORT_FAILED, IMPORT_COMPLETE, IMPORT_CANCELED
+};
+BuddyTransferStatus buddyTransferStatus();
+uint32_t pendingBuddyImportChecksum();
+void beginBuddyTransfer(bool importing);
+void endBuddyTransfer();

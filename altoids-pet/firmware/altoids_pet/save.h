@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 3;
+constexpr uint32_t SAVE_VERSION = 4;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -19,6 +19,8 @@ enum class GearId : uint8_t {
 
 enum class GearSlot : uint8_t { HEAD, FACE, NECK, BODY, FEET, PROP, COUNT };
 constexpr uint8_t GEAR_SLOT_COUNT = static_cast<uint8_t>(GearSlot::COUNT);
+
+enum class UnitsId : uint8_t { US = 0, METRIC = 1 };
 
 struct BuddySaveData {
   uint32_t saveVersion = SAVE_VERSION;
@@ -39,6 +41,11 @@ struct BuddySaveData {
   uint32_t unlockedGear = 0;     // Bit (GearId - 1), NONE has no bit.
   GearId equippedSlots[GEAR_SLOT_COUNT] = {};
   FurPaletteId furPalette = FurPaletteId::ORANGE;
+  bool soundEnabled = true;
+  UnitsId units = UnitsId::US;
+  bool locationConfigured = false;
+  int32_t latitudeMicrodegrees = 0;
+  int32_t longitudeMicrodegrees = 0;
   bool setupComplete = false; // Only genuinely new buddies need first-run setup.
 };
 

@@ -1,6 +1,7 @@
 #include "journal_ui.h"
 #include "journal.h"
 #include "gear.h"
+#include "units.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -64,10 +65,7 @@ void formatDate(int64_t timestamp, char *text, size_t length, bool withTime = fa
   }
 }
 void formatTemperature(int32_t deciF, char *text, size_t length) {
-  int64_t magnitude = deciF;
-  if (magnitude < 0) magnitude = -magnitude;
-  snprintf(text, length, "%s%lld.%lld F", deciF < 0 ? "-" : "",
-           static_cast<long long>(magnitude / 10), static_cast<long long>(magnitude % 10));
+  formatBuddyTemperature(deciF, text, length);
 }
 void noObservations() {
   centered(44, "NO OBSERVATIONS YET");

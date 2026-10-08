@@ -3,6 +3,7 @@
 #include "weather.h"
 #include "journal.h"
 #include "gear.h"
+#include "journal.h"
 #include "display.h"
 bool timeValid=true,weatherValid=true,sunTimesValid=true;
 int currentHour=12,currentMinute=34,sunriseHour=7,sunriseMinute=12,sunsetHour=18,sunsetMinute=42;
@@ -13,6 +14,16 @@ bool isDaylight(){return currentHour>=7 && currentHour<19;}
 const char *weatherName(){const char *names[]={"UNKNOWN","CLEAR","MAINLY CLEAR","PARTLY CLOUDY","CLOUDY","RAIN","STORM","SNOW","FOG"};return names[weatherState];}
 const char *moonPhaseName(){return "FULL MOON";}
 void soundPetInteraction(){}
+void stopSound(){}
+double configuredLatitude(){return 32;}
+double configuredLongitude(){return -95;}
+bool saveBuddySound(bool){return true;}
+bool saveBuddyUnits(UnitsId){return true;}
+BuddyTransferStatus buddyTransferStatus(){return BuddyTransferStatus::NONE;}
+uint32_t pendingBuddyImportChecksum(){return 0;}
+void beginBuddyTransfer(bool){}
+void endBuddyTransfer(){}
+bool confirmBuddyImport(uint32_t){return false;}
 bool handleTimerButtons(bool,bool,bool){return false;}
 void openTimerSetup(){}
 bool showTimerScreen(){return false;}
@@ -31,6 +42,7 @@ bool equipJournalGear(GearSlot slot,GearId gear){buddy.equippedSlots[static_cast
 #include "../../firmware/altoids_pet/journal_ui.cpp"
 #include "../../firmware/altoids_pet/display.cpp"
 #include "../../firmware/altoids_pet/buddy_setup.cpp"
+#include "../../firmware/altoids_pet/settings_ui.cpp"
 void snapshot(const char *name){
  char path[100];snprintf(path,sizeof(path),"/tmp/fwf-tft-%s.ppm",name);
  FILE *out=fopen(path,"wb");assert(out);fprintf(out,"P6\n240 240\n255\n");
@@ -58,6 +70,12 @@ int main(){
  for(auto duration:{5,10,15,25})drawTimerSetup(duration);snapshot("timer");
  currentHour=12;currentScreen=FOCUS_SCREEN;drawFocusTimer(1499);snapshot("focus");
  currentScreen=TIMER_DONE;drawTimerDone(0);snapshot("done");
+ for(int item=0;item<6;item++) {
+   openSettings();for(int step=0;step<item;step++)handleSettingsButtons(true,false,false);
+   char name[24];snprintf(name,sizeof(name),"settings-list-%d",item);snapshot(name);
+   handleSettingsButtons(false,true,false);snprintf(name,sizeof(name),"settings-page-%d",item);snapshot(name);
+   int pushed=windows;updateSettingsScreen();assert(windows==pushed);
+ }
  openJournalScreen(GEAR_SCREEN);snapshot("gear");
  handleJournalButtons(false,true,false);snapshot("slot");
  buddy.createdAt=1800000000;buddy.totalObservations=UINT64_MAX;buddy.uniqueDaysObserved=999;

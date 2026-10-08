@@ -35,5 +35,6 @@ const unsigned long ANIMATION_INTERVAL_MS = 250;
 
 // Optional small passive piezo: D3 (GPIO4) -> 220 ohm -> piezo +; piezo - -> GND.
 #define PIEZO_PIN D3
+// Default for new buddies / saves predating Settings; NVS preference takes precedence.
 #define SOUND_ENABLED true
 #define SOUND_STARTUP_CHIRP false

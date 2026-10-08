@@ -66,3 +66,8 @@ bool syncOnlineData();
 
 void initializeWeather(bool wokeFromButton);
 void checkClock();
+
+// Invalidate only on an explicit saved location change; next normal sync uses it.
+void invalidateWeatherLocation();
+double configuredLatitude();
+double configuredLongitude();

@@ -6,6 +6,7 @@
 #include "Arduino.h"
 #include "Preferences.h"
 #include "weather.h"
+void invalidateWeatherLocation() {}
 SerialType Serial;
 unsigned long fakeMillis=0;
 bool timeValid=true;
@@ -38,6 +39,7 @@ int menuIndex=2;
 void drawMenu() {display.clearDisplay();display.setTextSize(1);display.setCursor(0,0);display.print("MENU");display.display();}
 bool shown(const char *text) {for(auto &row:frameText)if(row.value==text)return true;return false;}
 void nextPage() {assert(handleJournalButtons(true,false,false));}
+#ifndef FWF_SETTINGS_TEST
 int main() {
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  initializeJournal();timeValid=false;checkpointJournal();unsigned writes=nvsWrites;
@@ -115,3 +117,5 @@ int main() {
  assert(frameClears==framePushes);
  puts("PASS: Journal pages, dated Records, all Gear choices/locks/equip/unequip/save errors, NVS restoration, import refresh, bounded text, protected storage, navigation and one update per changed frame.");
 }
+
+#endif

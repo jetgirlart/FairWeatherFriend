@@ -102,6 +102,8 @@ altoids-pet/
 │   ├── sound.cpp / sound.h
 │   ├── journal.cpp / journal.h
 │   ├── journal_ui.cpp / journal_ui.h
+│   ├── settings_ui.cpp / settings_ui.h
+│   ├── units.h / version.h
 │   ├── gear.cpp / gear.h
 │   ├── save.cpp / save.h
 │   ├── config.example.h
@@ -181,7 +183,7 @@ existing fetch can still display weather; the journal logs why it skipped progre
 ## First-run Buddy Setup and fur colors
 
 A genuinely new buddy enters WELCOME before the normal home/timer UI. Existing
-v1/v2 buddies and legacy birthday migrations skip it. A pending v3 setup resumes
+v1/v2 buddies and legacy birthday migrations skip it. A pending setup resumes
 at WELCOME after ordinary sleep/wake or reboot; confirmation is the permanent
 checkpoint. The existing Wi-Fi/NTP/weather startup still runs normally, and any
 accepted startup observation is retained when the color is confirmed.
@@ -210,31 +212,33 @@ There is no fur-settings menu, evolution, naming, gender, XP, or care system.
 
 ## Permanent saves and RTC cache
 
-`BuddySaveData` in `save.h` is **saveVersion 3**. It contains the research start
+`BuddySaveData` in `save.h` is **saveVersion 4**. It contains the research start
 (`createdAt`, exported as `researchBeganAt`), observation/day totals, latest
 observation, dated high/low records, eight category counters, discovery flags,
 unlocked gear flags, six equipped slot IDs, a stable `furPalette` ID and
-`setupComplete` flag. A zero start timestamp means the
+`setupComplete` flag, sound ON/OFF, units ID (US=0/METRIC=1), and optional
+location coordinates in signed millionths of a degree. A zero start timestamp means the
 existing clock has not become valid yet. It is captured once and never reset
 by observations, sleep, reboot, or firmware upload. A confirmed Import Buddy is
 an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 176-byte little-endian payload. Native structs, padding, mood,
+and an explicit 196-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
 
-Version 2 buddy records (168-byte payloads) are verified and explicitly migrated
-to version 3. Every observation, record, timestamp, discovery, unlock and equipped
-slot remains intact. Existing buddies receive ORANGE and `setupComplete=true`,
-so migration never opens first-run setup. Version 1 records (148-byte payloads)
-also retain the single-item-to-slot migration and receive the same defaults.
-The newest valid generation wins across v1/v2/v3 records. Migration queues a
-normal checkpoint to the alternate NVS key, retaining the earlier record as a
-fallback. Failed writes leave migration pending. Unknown/newer versions on
-either key block all writes.
+Version 3 records (176-byte payloads) migrate to version 4, preserving every
+progress field, fur palette and setup flag. New settings default to US units,
+the `SOUND_ENABLED` config default, and the configured latitude/longitude until
+a saved location override exists. Version 2 (168 bytes) and version 1 (148 bytes)
+retain their existing palette/setup and single-item-to-slot migrations, then
+receive these settings defaults. Existing completed buddies never repeat setup.
+The newest valid generation wins across v1/v2/v3/v4 records. Migration queues
+an alternate-slot checkpoint, retaining the old record as fallback. Failed
+writes leave migration pending. Unknown/newer versions on either key block all
+writes and never reset the buddy.
 
 The old `altoids-pet` namespace remains untouched. Migration reads the supported
 old `state0`/`state1` or original `state` record and copies **only the birthday**;
@@ -255,13 +259,13 @@ collections, and more gear can be added with explicit version migrations.
 
 NVS writes occur only for new/migrated save initialization, first valid creation
 time, accepted live observations, changed equipment, successful first-run
-confirmation, and confirmed import.
+confirmation, changed sound/units/location settings, and confirmed import.
 Unchanged loops, cached wakes, animations, and B reactions do not write flash.
 Normal pre-sleep checkpointing writes only pending changes. A failed save retains
 the previous NVS checkpoint, retries at most once per minute while awake, and
 gets another attempt at the existing sleep checkpoint. Pending RAM changes can
 be lost if power is removed before a failed write is recovered; this is logged.
-Export is deferred until pending progress has been saved successfully.
+Export serializes current validated runtime data without changing it or writing NVS.
 
 **RTC memory** retains only the existing weather/sunrise/sunset/cache freshness
 and timer runtime records. The permanent journal is loaded from NVS on every
@@ -335,8 +339,43 @@ equipment NVS storage remain unchanged.
 
 The menu is WEATHER, TIMER, JOURNAL, RECORDS, GEAR, SETTINGS. WEATHER and TIMER
 retain their first two positions and existing controls. The six entries fit
-on one screen. SETTINGS remains a selection-log placeholder; future action IDs
-cover EXPORT BUDDY, IMPORT BUDDY, LOCATION, UNITS, SOUND, DISPLAY, ABOUT.
+on one screen. SETTINGS opens the six-item menu documented below.
+
+## Settings
+
+SETTINGS contains SOUND, UNITS, LOCATION, EXPORT BUDDY, IMPORT BUDDY and ABOUT.
+A cycles, B opens/confirms, C backs out one level. SOUND/UNITS highlights are
+only drafts: C discards them; B commits a changed value immediately to verified
+NVS. A failed write shows SAVE FAILED and preserves the prior setting. Confirming
+an unchanged value does not write. All sound cues honor the stored ON/OFF,
+including timer completion; disabling also stops a current cue.
+
+US displays Fahrenheit; METRIC displays Celsius throughout HOME, WEATHER,
+Journal and Records. Permanent temperatures remain tenths Fahrenheit; records,
+dates and unlock thresholds do not change. Wind (mph/km/h) and precipitation
+(inches/mm) unit labels describe future fields; those measurements are not added.
+The focus/timer screens currently have no temperature display.
+
+LOCATION displays six-decimal latitude/longitude and whether they come from
+config or NVS. There is no keyboard/GPS. Send `SET_LOCATION <latitude> <longitude>`
+at 115200 baud with newline. Finite latitude [-90,90] and longitude [-180,180]
+are required; trailing garbage, missing values and failed NVS writes leave the
+old location/cache intact. Coordinates persist as integer microdegrees. A
+successful changed location marks runtime/RTC weather and sunrise/sunset stale
+without adding observations. The next normal online sync (cold boot or next
+wake with stale cache) uses it. Setting a location does not initiate a new Wi-Fi
+connection in the current loop. RTC cache entries carry their source coordinates
+so an old-location cache cannot be restored after an import or reboot.
+Timezone handling remains US Central with the existing DST rule.
+
+EXPORT/IMPORT wait for USB Serial commands. Export shows EXPORT COMPLETE without
+changing buddy data or writing NVS. Import requires on-device confirmation as
+described below. C discards staged data. Completion offers B/C to return HOME;
+palette, gear, sound and units are read from the imported buddy immediately.
+ABOUT reads firmware version from `version.h` (`FW_VERSION`), save format version
+from `SAVE_VERSION`, and shows board/display and open-source identification.
+Settings screens draw once per navigation/value/transfer-status change; idle
+polls do not redraw. Normal inactivity sleep and B wake remain unchanged.
 
 ## Journal, Records, and Gear screens
 
@@ -377,42 +416,51 @@ Use USB Serial at **115200 baud**, with newline-terminated commands. Export/impo
 serialize all permanent fields, including a canonical-payload FNV-1a checksum
 written as eight hexadecimal characters. It detects accidental corruption; it
 is not an authentication mechanism. JSON uses tenths Fahrenheit regardless of
-future display units and contains no Wi-Fi credentials or weather cache.
+selected display units and contains no Wi-Fi credentials or weather cache.
 
-Version 3 JSON contains all six numeric equipment IDs plus the selected fur ID
-and setup state:
+Version 4 JSON contains all six numeric equipment IDs plus the selected fur ID
+and setup state, plus settings:
 
 ```json
 "equippedSlots": {"HEAD": 1, "FACE": 2, "NECK": 5, "BODY": 4, "FEET": 7, "PROP": 3},
 "furPalette": 0,
-"setupComplete": true
+"setupComplete": true,
+"soundEnabled": true,
+"units": 0,
+"locationConfigured": true,
+"latitudeMicrodegrees": 32000000,
+"longitudeMicrodegrees": -95000000
 ```
 
 Gear IDs remain unchanged; 0 means NONE. Import requires all slots, compatible
 unlocked items, integer fur IDs 0–4, a boolean setup flag, and a matching checksum.
 Strings, missing palette fields, invalid IDs and newer versions are rejected
-without writes. Version 1/2 backups remain supported: their original byte-format
-checksums are verified before upgrading to v3 with ORANGE and setup complete.
-Use the confirmation checksum printed by staging, which describes the upgraded
-buddy. Current-version backups also preserve an unfinished setup's false flag.
+without writes. Version 1/2/3 backups remain supported: their original byte-format
+checksums are verified before upgrading to v4. Version 3 retains fur/setup;
+versions 1/2 receive ORANGE and setup complete. All receive settings defaults.
+Version 4 requires valid sound/units/location fields and includes them in the
+checksum. Current-version backups also preserve an unfinished setup's false flag.
 
 ```text
 EXPORT_BUDDY
 IMPORT_BUDDY { ...complete one-line exported JSON... }
-CONFIRM_IMPORT 1234abcd
 CANCEL_IMPORT
+SET_LOCATION 32.000000 -95.000000
 ```
 
-1. Send `EXPORT_BUDDY`. Copy **only the JSON object** into `buddy.json`, excluding
-   startup/diagnostic logs. Pretty-printed output is human-readable.
-2. Import using `IMPORT_BUDDY ` followed by the complete JSON on **one line**.
-   Required fields/types, version, counters, dates, temperature records, flags,
-   equipment, and checksum must validate. Failed validation writes nothing.
-3. Successful staging prints an exact `CONFIRM_IMPORT <checksum>` command.
-   Send that command within **60 seconds** to explicitly replace the current
-   buddy. Staging alone writes nothing. Cancel, timeout, sleep, or reset discards
-   the staged import. Failed NVS confirmation keeps the current runtime buddy.
-4. Export again and compare the JSON to verify the restored buddy.
+1. Open SETTINGS → EXPORT BUDDY and send `EXPORT_BUDDY`. Copy only the JSON
+   object into `buddy.json`, excluding startup/diagnostic logs. Export also works
+   as a development Serial command outside the transfer screens.
+2. Open SETTINGS → IMPORT BUDDY, then send `IMPORT_BUDDY ` followed by the
+   complete JSON on one line. Required types, version, counters, dates, records,
+   flags, palette, compatible unlocked gear, settings and checksum must validate.
+   Failed validation shows IMPORT FAILED and writes nothing.
+3. Valid data shows REPLACE CURRENT BUDDY? Press B within 60 seconds to commit
+   and verify NVS; C or `CANCEL_IMPORT` discards it. Timeout, sleep or reset also
+   discards staging. `CONFIRM_IMPORT` is recognized but cannot commit over Serial;
+   explicit on-device B confirmation is required. A failed NVS commit preserves
+   the current runtime buddy.
+4. After IMPORT COMPLETE, B/C returns HOME. Export again to verify restoration.
 
 To compact an exported JSON file for the Serial Monitor:
 
@@ -421,11 +469,11 @@ python3 -c 'import json,sys; print("IMPORT_BUDDY "+json.dumps(json.load(sys.stdi
 ```
 
 `exportBuddy()`, `importBuddy()`, `confirmBuddyImport()`, serialization, and
-validation functions are available for a future settings UI. Commands use a
+validation functions now support the settings UI. Commands use a
 fixed 4096-character line limit and consume at most 64 received bytes per loop;
 there are no blocking Serial line reads. **Normal 30-second sleep still applies**
 during transfer; complete commands/confirmation promptly or use an already
-running focus timer to keep the device awake. Serial activity does not change
+button activity to keep the device awake. Serial activity does not change
 power or button policy. No save-reset command is provided.
 
 ## Preserved display, companion, timer, and sound behavior
@@ -515,6 +563,7 @@ Optional piezo settings in private `config.h`:
 
 ```cpp
 #define PIEZO_PIN D3
+// Default for new/migrated buddies; the saved SOUND setting takes precedence.
 #define SOUND_ENABLED true
 #define SOUND_STARTUP_CHIRP false
 ```
@@ -629,7 +678,7 @@ On the physical device:
 - Run each timer preset through focus/DONE. Check large countdown, book/gear
   overlap, night sleeping pose, happy completion, sound, and sleep inhibition.
 - Export Buddy before/after upload with erase disabled. Confirm progress and
-  all six equipped slots are unchanged; v2 upgrades to v3 with ORANGE and no setup.
+  all six equipped slots are unchanged; v2 upgrades to v4 with ORANGE and no setup.
 - Test an actual online weather/NTP fetch and subsequent cached wakes; check
   Serial for resets/allocation failures while the larger canvas is allocated.
 
@@ -688,7 +737,7 @@ On the physical device:
    erase settings, then verify the same buddy date/progress is loaded. Account
    for any new accepted live fetch. Do not erase flash to test routine updates.
 8. **USB transfer:** Export valid JSON. Stage an import and verify no write before
-   confirmation; confirm its checksum and export again. Try malformed JSON,
+   confirmation; press B on the import confirmation screen and export again. Try malformed JSON,
    missing fields, bad checksum, newer version, wrong confirmation, cancel, and
    timeout. The current buddy must remain intact on rejection.
 9. **Regression:** Exercise all A/B/C controls, pet sleep hours, idle/weather
@@ -761,7 +810,7 @@ First-run/palette hardware checks:
 - Check selected color through every expression, B hop/heart, night sleep,
   weather reactions, timer focus/book and DONE. Equip all slots and check masks,
   eye readability, attachments and unchanged foreground/weather layering.
-- Export/import a v3 buddy and verify palette survives. Check old v2 backups
+- Export/import a v4 buddy and verify palette/settings survive. Check old v2/v3 backups
   upgrade to ORANGE without setup. Invalid fur IDs, strings, missing fields and
   bad checksums must leave the current buddy intact.
 
@@ -791,7 +840,7 @@ Existing progress regression checks:
    erase settings, then verify the same buddy date/progress is loaded. Account
    for any new accepted live fetch. Do not erase flash to test routine updates.
 8. **USB transfer:** Export valid JSON. Stage an import and verify no write before
-   confirmation; confirm its checksum and export again. Try malformed JSON,
+   confirmation; press B on the import confirmation screen and export again. Try malformed JSON,
    missing fields, bad checksum, newer version, wrong confirmation, cancel, and
    timeout. The current buddy must remain intact on rejection.
 9. **Regression:** Exercise all A/B/C controls, pet sleep hours, idle/weather
@@ -805,3 +854,31 @@ extra fetch button were added to production firmware.
 ## License
 
 A license has not yet been selected; see `LICENSE`.
+
+## Settings validation
+
+The Settings host suite uses real save/JSON/journal/UI code with NVS and panel
+stubs. It covers draft cancellation, write failures/reboot retention, unit
+conversion and record preservation, location parsing/bounds/repeated values,
+read-only exports, B-only imports/cancel/expiry/commit failures, protected storage,
+text bounds and idle redraw suppression:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/journal_ui/stubs -Ialtoids-pet/tests/journal/stubs \
+  -Ialtoids-pet/firmware/altoids_pet \
+  -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+  altoids-pet/tests/settings/test_settings.cpp -o /tmp/fwf-settings-tests
+/tmp/fwf-settings-tests
+```
+
+On hardware, export a backup first. Check all A/B/C Settings paths, canceled
+sound/units drafts, OFF pet/timer cues and ON restoration across power loss.
+Toggle US/METRIC and compare HOME/WEATHER/Journal/Records without changing their
+stored records. Test valid/invalid SET_LOCATION, confirm no fabricated observation,
+then sleep/wake and verify a new-location live fetch. Restore your original
+coordinates afterward. Test export success, malformed/future-version/bad-checksum
+imports, valid import cancellation and B-only replacement. Confirm ABOUT text,
+unchanged-frame/minute flicker behavior, and normal sleep/wake/cache/timer/gear.
+Use the existing partition and erase-disabled settings when uploading yourself.

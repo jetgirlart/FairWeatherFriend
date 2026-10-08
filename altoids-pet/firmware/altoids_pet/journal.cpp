@@ -3,6 +3,7 @@
 #include "weather.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 namespace {
 BuddySaveData buddy;
@@ -16,6 +17,8 @@ constexpr unsigned long IMPORT_CONFIRM_MS = 60000;
 char serialLine[4097];
 size_t serialLength = 0;
 bool serialOverflow = false;
+bool buttonImportRequired = false;
+BuddyTransferStatus transferStatus = BuddyTransferStatus::NONE;
 
 uint32_t localDate(int64_t timestamp) {
   time_t epoch = static_cast<time_t>(timestamp);
@@ -25,23 +28,27 @@ uint32_t localDate(int64_t timestamp) {
 }
 void processSerialLine() {
   if (strcmp(serialLine, "EXPORT_BUDDY") == 0) {
-    exportBuddy(Serial);
+    if (buttonImportRequired) { Serial.println("Cancel import before exporting."); return; }
+    transferStatus = exportBuddy(Serial) ? BuddyTransferStatus::EXPORT_COMPLETE : BuddyTransferStatus::EXPORT_FAILED;
   } else if (strncmp(serialLine, "IMPORT_BUDDY ", 13) == 0) {
-    importBuddy(serialLine + 13, serialLength - 13);
+    if (!buttonImportRequired) { Serial.println("Open SETTINGS > IMPORT BUDDY, then resend import data."); return; }
+    transferStatus = importBuddy(serialLine + 13, serialLength - 13) ? BuddyTransferStatus::IMPORT_READY : BuddyTransferStatus::IMPORT_FAILED;
   } else if (strncmp(serialLine, "CONFIRM_IMPORT ", 15) == 0) {
-    const char *text = serialLine + 15;
-    bool valid = strlen(text) == 8;
-    for (size_t i = 0; valid && i < 8; ++i) {
-      char c = text[i];
-      valid = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    }
-    if (!valid || !confirmBuddyImport(strtoul(text, nullptr, 16))) {
-      Serial.println("Import not confirmed; current buddy preserved.");
-    }
+    Serial.println("Serial confirmation disabled: press B on IMPORT BUDDY to replace; C cancels.");
   } else if (strcmp(serialLine, "CANCEL_IMPORT") == 0) {
-    cancelBuddyImport(); Serial.println("Import canceled.");
+    cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_CANCELED; Serial.println("Import canceled.");
+  } else if (strncmp(serialLine, "SET_LOCATION ", 13) == 0) {
+    const char *start = serialLine + 13; char *end = nullptr;
+    double latitude = strtod(start, &end);
+    bool valid = end != start && *end == ' ';
+    start = end; double longitude = strtod(start, &end);
+    bool longitudeParsed = end != start;
+    while (*end == ' ') ++end;
+    valid = valid && longitudeParsed && *end == 0;
+    if (!valid || !saveBuddyLocation(latitude, longitude)) Serial.println("SET_LOCATION failed: use latitude [-90,90] longitude [-180,180]; save must be writable.");
+    else Serial.println("Location saved; next live sync uses the new coordinates.");
   } else if (serialLength != 0) {
-    Serial.println("Buddy commands: EXPORT_BUDDY, IMPORT_BUDDY <one-line JSON>, CONFIRM_IMPORT <checksum>, CANCEL_IMPORT");
+    Serial.println("Buddy commands: EXPORT_BUDDY, IMPORT_BUDDY <one-line JSON>, CANCEL_IMPORT, SET_LOCATION <latitude> <longitude>");
   }
 }
 } // namespace
@@ -66,9 +73,10 @@ void initializeJournal() {
   available = buddySaveWritable();
   dirty = available && result != SaveLoadResult::LOADED;
   retryPending = false; importPending = false;
+  buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
   serialLength = 0; serialOverflow = false;
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
-                       result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (palette migration queued)" :
+                       result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (settings migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
                        result == SaveLoadResult::NEW_BUDDY ? "newly initialized" : "protected/unavailable NVS";
   Serial.printf("Field Journal loaded from %s: observations %llu, days %lu, research began %lld\n",
@@ -176,23 +184,20 @@ bool equipJournalGear(GearSlot slot, GearId gear) {
 
 bool exportBuddy(Print &output) {
   if (!available) { output.println("ERROR: Buddy export unavailable; original NVS data preserved."); return false; }
-  checkpointJournal();
-  if (dirty) { output.println("ERROR: Export deferred until pending progress is saved."); return false; }
   bool success = serializeBuddySave(buddy, output);
   output.println();
   return success;
 }
 
 bool importBuddy(const char *json, size_t length) {
-  cancelBuddyImport();
+  cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED;
   if (!available) { Serial.println("Import disabled: buddy storage is protected/unavailable."); return false; }
   const char *error = nullptr;
   if (!deserializeBuddySave(json, length, pendingImport, error)) {
     Serial.printf("Import rejected: %s. Existing buddy preserved.\n", error); return false;
   }
-  importPending = true; importStarted = millis();
-  Serial.printf("Import validated; will REPLACE the current buddy. Within 60 seconds send CONFIRM_IMPORT %08lx, or CANCEL_IMPORT.\n",
-                static_cast<unsigned long>(buddySaveChecksum(pendingImport)));
+  importPending = true; importStarted = millis(); transferStatus = BuddyTransferStatus::IMPORT_READY;
+  Serial.println("Import validated; press B on IMPORT BUDDY within 60 seconds to REPLACE, or C to cancel.");
   return true;
 }
 
@@ -201,9 +206,13 @@ bool confirmBuddyImport(uint32_t checksum) {
       checksum != buddySaveChecksum(pendingImport)) return false;
   if (!persistBuddySave(pendingImport)) {
     Serial.println("Import NVS commit failed; current runtime buddy preserved.");
-    cancelBuddyImport(); return false;
+    cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED; return false;
   }
+  bool locationChanged = buddy.locationConfigured != pendingImport.locationConfigured ||
+      buddy.latitudeMicrodegrees != pendingImport.latitudeMicrodegrees || buddy.longitudeMicrodegrees != pendingImport.longitudeMicrodegrees;
   buddy = pendingImport; dirty = false; retryPending = false;
+  if (locationChanged) invalidateWeatherLocation();
+  transferStatus = BuddyTransferStatus::IMPORT_COMPLETE;
   cancelBuddyImport();
   Serial.println("Buddy import committed and verified.");
   return true;
@@ -213,7 +222,7 @@ void cancelBuddyImport() { importPending = false; pendingImport = BuddySaveData{
 
 void updateBuddySerial() {
   if (importPending && millis() - importStarted >= IMPORT_CONFIRM_MS) {
-    cancelBuddyImport(); Serial.println("Import confirmation expired; current buddy preserved.");
+    cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED; Serial.println("Import confirmation expired; current buddy preserved.");
   }
   // Fixed storage, bounded work per loop, no readString/readBytes waits.
   unsigned processed = 0;
@@ -224,7 +233,7 @@ void updateBuddySerial() {
     if (c == '\r') continue;
     if (c == '\n') {
       serialLine[serialLength] = 0;
-      if (serialOverflow) { cancelBuddyImport(); Serial.println("Buddy command too long; discarded without writing."); }
+      if (serialOverflow) { cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED; Serial.println("Buddy command too long; discarded without writing."); }
       else processSerialLine();
       serialLength = 0; serialOverflow = false;
     } else if (c == '\0') {
@@ -236,3 +245,37 @@ void updateBuddySerial() {
 }
 
 void updateJournal() { checkpointJournal(); updateBuddySerial(); }
+
+namespace {
+bool commitSettings(const BuddySaveData &next) {
+  if (!available) return false;
+  if (buddySaveChecksum(next) == buddySaveChecksum(buddy)) return true;
+  if (!persistBuddySave(next)) return false;
+  buddy = next; dirty = false; retryPending = false; return true;
+}
+}
+bool saveBuddySound(bool enabled) {
+  BuddySaveData next = buddy; next.soundEnabled = enabled; return commitSettings(next);
+}
+bool saveBuddyUnits(UnitsId units) {
+  if (static_cast<uint8_t>(units) > 1) return false;
+  BuddySaveData next = buddy; next.units = units; return commitSettings(next);
+}
+bool saveBuddyLocation(double latitude, double longitude) {
+  if (!isfinite(latitude) || !isfinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return false;
+  BuddySaveData next = buddy; next.locationConfigured = true;
+  next.latitudeMicrodegrees = lround(latitude * 1000000); next.longitudeMicrodegrees = lround(longitude * 1000000);
+  bool changed = buddySaveChecksum(next) != buddySaveChecksum(buddy);
+  if (!commitSettings(next)) return false;
+  if (changed) invalidateWeatherLocation();
+  return true;
+}
+BuddyTransferStatus buddyTransferStatus() { return transferStatus; }
+uint32_t pendingBuddyImportChecksum() { return importPending ? buddySaveChecksum(pendingImport) : 0; }
+void beginBuddyTransfer(bool importing) {
+  cancelBuddyImport(); buttonImportRequired = importing;
+  transferStatus = BuddyTransferStatus::NONE;
+}
+void endBuddyTransfer() {
+  cancelBuddyImport(); buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
+}

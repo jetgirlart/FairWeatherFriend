@@ -7,6 +7,7 @@
 #include "journal.h"
 #include "journal_ui.h"
 #include "buddy_setup.h"
+#include "settings_ui.h"
 
 void setup() {
   // Keep the TFT dark during the existing Serial/clock/cache startup path.
@@ -43,5 +44,6 @@ void loop() {
   updateJournal();
   updateJournalScreens();
   updateBuddySetup();
+  updateSettingsScreen();
   sleepIfIdle();
 }

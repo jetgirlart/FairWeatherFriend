@@ -1,17 +1,25 @@
 #include "save.h"
+#ifdef ARDUINO
+#include "config.h"
+#endif
+#ifndef SOUND_ENABLED
+#define SOUND_ENABLED true
+#endif
 #include "gear.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <stddef.h>
 #include <initializer_list>
 #include <string.h>
+#include <math.h>
 
 namespace {
 constexpr uint32_t SAVE_MAGIC = 0x46574631; // FWF1 envelope, stable across versions.
 constexpr size_t V1_PAYLOAD_BYTES = 148;
 constexpr size_t COMMON_PAYLOAD_BYTES = 144;
 constexpr size_t V2_PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
-constexpr size_t PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
+constexpr size_t V3_PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
+constexpr size_t PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 uint64_t generation = 0;
@@ -52,6 +60,9 @@ void encodeCurrent(const BuddySaveData &s, uint8_t *p) {
   p += COMMON_PAYLOAD_BYTES;
   for (GearId gear : s.equippedSlots) put32(p, static_cast<uint8_t>(gear));
   put32(p, static_cast<uint8_t>(s.furPalette)); put32(p, s.setupComplete ? 1 : 0);
+  put32(p, s.soundEnabled ? 1 : 0); put32(p, static_cast<uint8_t>(s.units));
+  put32(p, s.locationConfigured ? 1 : 0);
+  put32(p, s.latitudeMicrodegrees); put32(p, s.longitudeMicrodegrees);
 }
 // Reconstruct the exact v1 payload for verifying old JSON checksums.
 uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
@@ -62,7 +73,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -70,9 +81,13 @@ uint32_t v2Checksum(const BuddySaveData &s) {
   for (GearId gear : old.equippedSlots) put32(p, static_cast<uint8_t>(gear));
   return hashBytes(bytes, sizeof(bytes));
 }
+uint32_t v3Checksum(const BuddySaveData &s) {
+  uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 3;
+  encodeCurrent(old, bytes); return hashBytes(bytes, V3_PAYLOAD_BYTES);
+}
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
   if (length != payloadSize(version)) return false;
-  s = BuddySaveData{};
+  s = BuddySaveData{}; s.soundEnabled = SOUND_ENABLED;
   if (get32(p) != version) return false; s.createdAt = get64(p); s.totalObservations = get64(p);
   s.uniqueDaysObserved = get32(p); s.latestObservationAt = get64(p); s.lastObservedDate = get32(p);
   s.latestTemperatureDeciF = int32_t(get32(p)); s.latestWeatherCode = int32_t(get32(p));
@@ -93,12 +108,19 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
       gear = static_cast<GearId>(id);
     }
   }
-  if (version < SAVE_VERSION) {
+  if (version < 3) {
     s.furPalette = FurPaletteId::ORANGE; s.setupComplete = true;
   } else {
     uint32_t palette = get32(p), complete = get32(p);
     if (palette >= FUR_PALETTE_COUNT || complete > 1) return false;
     s.furPalette = static_cast<FurPaletteId>(palette); s.setupComplete = complete == 1;
+  }
+  if (version >= 4) {
+    uint32_t sound = get32(p), units = get32(p), configured = get32(p);
+    if (sound > 1 || units > 1 || configured > 1) return false;
+    s.soundEnabled = sound == 1; s.units = static_cast<UnitsId>(units);
+    s.locationConfigured = configured == 1;
+    s.latitudeMicrodegrees = int32_t(get32(p)); s.longitudeMicrodegrees = int32_t(get32(p));
   }
   return validateBuddySave(s);
 }
@@ -106,7 +128,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -123,7 +145,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -236,6 +258,9 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  if (static_cast<uint8_t>(s.units) > 1 || s.latitudeMicrodegrees < -90000000 || s.latitudeMicrodegrees > 90000000 ||
+      s.longitudeMicrodegrees < -180000000 || s.longitudeMicrodegrees > 180000000 ||
+      (!s.locationConfigured && (s.latitudeMicrodegrees != 0 || s.longitudeMicrodegrees != 0))) return false;
   if (static_cast<uint8_t>(s.furPalette) >= FUR_PALETTE_COUNT || s.saveVersion != SAVE_VERSION || s.createdAt < 0 || s.latestObservationAt < 0 ||
       s.highestTemperatureAt < 0 || s.lowestTemperatureAt < 0 ||
       (s.discoveredWeather & ~0xffUL) || (s.unlockedGear & ~0x7fUL) ||
@@ -276,7 +301,7 @@ uint32_t buddySaveChecksum(const BuddySaveData &data) {
 }
 
 SaveLoadResult loadBuddySave(BuddySaveData &data) {
-  writable = false; generation = 0; data = BuddySaveData{};
+  writable = false; generation = 0; data = BuddySaveData{}; data.soundEnabled = SOUND_ENABLED;
   Preferences prefs;
   if (!prefs.begin("fwf-buddy", false)) {
     Serial.println("ERROR: Buddy NVS unavailable; no progress will be overwritten.");
@@ -338,6 +363,10 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   doc["saveVersion"] = s.saveVersion;
   doc["furPalette"] = static_cast<uint8_t>(s.furPalette);
   doc["setupComplete"] = s.setupComplete;
+  doc["soundEnabled"] = s.soundEnabled; doc["units"] = static_cast<uint8_t>(s.units);
+  doc["locationConfigured"] = s.locationConfigured;
+  doc["latitudeMicrodegrees"] = s.latitudeMicrodegrees;
+  doc["longitudeMicrodegrees"] = s.longitudeMicrodegrees;
   doc["researchBeganAt"] = s.createdAt;
   doc["totalObservations"] = s.totalObservations;
   doc["uniqueDaysObserved"] = s.uniqueDaysObserved;
@@ -372,18 +401,26 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
   if (!doc["saveVersion"].is<uint32_t>() || payloadSize(doc["saveVersion"].as<uint32_t>()) == 0) {
     error = "Unsupported saveVersion; existing buddy preserved"; return false;
   }
-  BuddySaveData s;
+  BuddySaveData s; s.soundEnabled = SOUND_ENABLED;
 #define READ_FIELD(key, field, type) \
   if (!doc[key].is<type>()) { error = "Missing or invalid " key; return false; } \
   s.field = doc[key].as<type>();
   uint32_t importedVersion = doc["saveVersion"].as<uint32_t>();
-  if (importedVersion < SAVE_VERSION) {
+  if (importedVersion < 3) {
     s.furPalette = FurPaletteId::ORANGE; s.setupComplete = true;
   } else {
     if (!doc["furPalette"].is<uint32_t>() || doc["furPalette"].as<uint32_t>() >= FUR_PALETTE_COUNT ||
         !doc["setupComplete"].is<bool>()) { error = "Invalid fur palette/setup state"; return false; }
     s.furPalette = static_cast<FurPaletteId>(doc["furPalette"].as<uint32_t>());
     s.setupComplete = doc["setupComplete"].as<bool>();
+  }
+  if (importedVersion >= 4) {
+    if (!doc["soundEnabled"].is<bool>() || !doc["units"].is<uint32_t>() || doc["units"].as<uint32_t>() > 1 ||
+        !doc["locationConfigured"].is<bool>()) { error = "Invalid settings"; return false; }
+    s.soundEnabled = doc["soundEnabled"].as<bool>(); s.units = static_cast<UnitsId>(doc["units"].as<uint32_t>());
+    s.locationConfigured = doc["locationConfigured"].as<bool>();
+    READ_FIELD("latitudeMicrodegrees", latitudeMicrodegrees, int32_t)
+    READ_FIELD("longitudeMicrodegrees", longitudeMicrodegrees, int32_t)
   }
   READ_FIELD("researchBeganAt", createdAt, int64_t)
   READ_FIELD("totalObservations", totalObservations, uint64_t)
@@ -433,6 +470,6 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   data = s; error = nullptr; return true;
 }

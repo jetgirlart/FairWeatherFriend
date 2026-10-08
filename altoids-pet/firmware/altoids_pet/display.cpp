@@ -1,6 +1,8 @@
 #include "display.h"
 #include "journal_ui.h"
 #include "buddy_setup.h"
+#include "settings_ui.h"
+#include "units.h"
 #include "pet.h"
 #include "sprites.h"
 #include "weather.h"
@@ -512,7 +514,7 @@ void drawHome() {
   }
   display.drawFastHLine(26, 182, 180, COLOR_MUTED);
   if (weatherValid) {
-    char text[16]; snprintf(text, sizeof(text), "%d F", temperatureF);
+    char text[16]; formatBuddyTemperature(temperatureF * 10, text, sizeof(text), false);
     display.setTextColor(COLOR_TEXT); centeredText(188, text, 2);
   }
   display.setTextColor(COLOR_COOL);
@@ -524,7 +526,7 @@ void drawWeatherScreen() {
   centeredText(12, "WEATHER", 3);
   iconAt(120, 67);
   if (weatherValid) {
-    char text[16]; snprintf(text, sizeof(text), "%d F", temperatureF);
+    char text[16]; formatBuddyTemperature(temperatureF * 10, text, sizeof(text), false);
     centeredText(98, text, 3); centeredText(135, weatherName(), 2);
   }
   if (sunTimesValid) {
@@ -551,6 +553,7 @@ void drawMenu() {
 }
 
 void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
+  if (handleSettingsButtons(aPressed, bPressed, cPressed)) return;
   if (handleBuddySetupButtons(aPressed, bPressed, cPressed)) return;
   if (handleTimerButtons(aPressed, bPressed, cPressed)) return;
   if (handleJournalButtons(aPressed, bPressed, cPressed)) return;
@@ -637,6 +640,8 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
         openJournalScreen(RECORDS_SCREEN);
       } else if (menuIndex == 4) {
         openJournalScreen(GEAR_SCREEN);
+      } else if (menuIndex == 5) {
+        openSettings();
       } else {
 
         Serial.print(

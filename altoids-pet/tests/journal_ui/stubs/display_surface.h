@@ -20,6 +20,7 @@ struct DisplaySurface {
     frameText.push_back({x,y,size,text});
   }
   void display() { framePushes++;assert(framePushes==frameClears); }
+  void drawRect(int x,int y,int w,int h,int) {assert(x>=0 && y>=0 && x+w<=240 && y+h<=240);}
   void fillCircle(int x,int y,int r,int) { assert(x-r>=0 && x+r<240 && y-r>=0 && y+r<240);discoveryDots++; }
   void drawCircle(int x,int y,int r,int) { assert(x-r>=0 && x+r<240 && y-r>=0 && y+r<240); }
 };

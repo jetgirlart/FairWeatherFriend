@@ -60,6 +60,9 @@ MoonPhase currentMoonPhase = MOON_NEW;
 // Survives ESP32 deep sleep.
 // ==================================================
 
+RTC_DATA_ATTR int32_t cachedLatitudeMicrodegrees = 0;
+RTC_DATA_ATTR int32_t cachedLongitudeMicrodegrees = 0;
+RTC_DATA_ATTR bool cacheLocationKnown = false;
 RTC_DATA_ATTR bool cachedWeatherValid = false;
 RTC_DATA_ATTR bool cachedSunTimesValid = false;
 
@@ -316,12 +319,27 @@ bool parseHourMinute(
 // CACHE WEATHER
 // ==================================================
 
+double configuredLatitude() {
+  const auto &s = getBuddySave(); return s.locationConfigured ? s.latitudeMicrodegrees / 1000000.0 : LATITUDE;
+}
+double configuredLongitude() {
+  const auto &s = getBuddySave(); return s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE;
+}
+void invalidateWeatherLocation() {
+  cachedWeatherValid = cachedSunTimesValid = weatherValid = sunTimesValid = false;
+  cacheLocationKnown = false; lastOnlineSync = 0;
+  weatherState = WEATHER_UNKNOWN;
+  Serial.println("Location changed; weather/sun cache stale. Next normal sync uses saved coordinates.");
+}
 void saveCachedData() {
 
   if (!weatherValid) {
     return;
   }
 
+  cachedLatitudeMicrodegrees = lround(configuredLatitude() * 1000000);
+  cachedLongitudeMicrodegrees = lround(configuredLongitude() * 1000000);
+  cacheLocationKnown = true;
   cachedWeatherValid =
     true;
 
@@ -355,6 +373,11 @@ void saveCachedData() {
 }
 
 void restoreCachedData() {
+  if (cachedWeatherValid && (!cacheLocationKnown ||
+      cachedLatitudeMicrodegrees != lround(configuredLatitude() * 1000000) ||
+      cachedLongitudeMicrodegrees != lround(configuredLongitude() * 1000000))) {
+    invalidateWeatherLocation();
+  }
 
   if (!cachedWeatherValid) {
     return;
@@ -414,9 +437,9 @@ bool fetchWeather() {
   String url =
     "https://api.open-meteo.com/v1/forecast"
     "?latitude=" +
-    String(LATITUDE, 4) +
+    String(configuredLatitude(), 6) +
     "&longitude=" +
-    String(LONGITUDE, 4) +
+    String(configuredLongitude(), 6) +
     "&current=temperature_2m,weather_code"
     "&daily=sunrise,sunset"
     "&temperature_unit=fahrenheit"
