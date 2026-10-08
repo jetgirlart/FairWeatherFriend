@@ -16,52 +16,48 @@ const int BUTTON_A = D0;
 const int BUTTON_B = D1;
 const int BUTTON_C = D2;
 
-bool lastA = HIGH;
-bool lastB = HIGH;
-bool lastC = HIGH;
-
-unsigned long lastButtonTime = 0;
+namespace {
 const unsigned long debounceTime = 120;
+struct ButtonState {
+  bool armed = true;
+  bool releasing = false;
+  uint32_t releaseStarted = 0;
+};
+ButtonState buttonA, buttonB, buttonC;
+} // namespace
 
 unsigned long lastActivityTime = 0;
 
-// ==================================================
-// BUTTON HANDLING
-// ==================================================
-
-bool pressed(
-  int pin,
-  bool &lastState
-) {
-
-  bool currentState =
-    digitalRead(pin);
-
-  bool wasPressed =
-    false;
-
-  if (
-    lastState == HIGH &&
-    currentState == LOW &&
-    millis() - lastButtonTime >
-      debounceTime
-  ) {
-
-    wasPressed =
-      true;
-
-    lastButtonTime =
-      millis();
-
-    lastActivityTime =
-      millis();
+// One event on press-down; a held button cannot repeat. Keep the press latched
+// through release bounce until HIGH has been observed continuously for 120 ms.
+namespace {
+bool pressed(int pin, ButtonState &state) {
+  uint32_t now = static_cast<uint32_t>(millis());
+  if (digitalRead(pin) == LOW) {
+    state.releasing = false;
+    if (!state.armed) return false;
+    state.armed = false;
+    lastActivityTime = now;
+    return true;
   }
-
-  lastState =
-    currentState;
-
-  return wasPressed;
+  if (!state.armed) {
+    if (!state.releasing) {
+      state.releasing = true;
+      state.releaseStarted = now;
+    } else if (now - state.releaseStarted >= debounceTime) {
+      state.armed = true;
+      state.releasing = false;
+    }
+  }
+  return false;
 }
+void initializeButtonState(int pin, ButtonState &state) {
+  state = ButtonState{};
+  // A button held at boot (especially the B wake press) must be released
+  // before it can generate another action.
+  state.armed = digitalRead(pin) == HIGH;
+}
+} // namespace
 
 // ==================================================
 // DEEP SLEEP
@@ -131,6 +127,10 @@ void initializeButtons() {
     BUTTON_C,
     INPUT_PULLUP
   );
+
+  initializeButtonState(BUTTON_A, buttonA);
+  initializeButtonState(BUTTON_B, buttonB);
+  initializeButtonState(BUTTON_C, buttonC);
 }
 
 bool wokeFromButton() {
@@ -150,19 +150,19 @@ ButtonPresses readButtons() {
   bool aPressed =
     pressed(
       BUTTON_A,
-      lastA
+      buttonA
     );
 
   bool bPressed =
     pressed(
       BUTTON_B,
-      lastB
+      buttonB
     );
 
   bool cPressed =
     pressed(
       BUTTON_C,
-      lastC
+      buttonC
     );
 
   return {aPressed, bPressed, cPressed};

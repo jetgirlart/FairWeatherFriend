@@ -28,6 +28,12 @@ Buttons are active LOW with pull-ups. OLED address remains `0x3D`; I2C remains
 for pinout and programming recovery. Battery voltage monitoring is not implemented.
 The XIAO hardware handles charging; firmware does not change it.
 
+Each button produces one immediate press-down event and stays latched through
+holding and release bounce. It rearms only after HIGH is observed continuously
+for 120 ms. Release itself never advances a page or repeats an action. Buttons
+are debounced independently without blocking delays. A button held at boot/wake
+must first be released, so holding B to wake does not also trigger a pet action.
+
 ## Arduino setup, configuration, and upload
 
 Use the working board options and installed library versions. Select
@@ -90,6 +96,7 @@ altoids-pet/
 ├── tests/journal/                # save/observation host checks
 ├── tests/journal_ui/             # screen/control host checks
 ├── tests/gear_overlay/           # bitmap/composition host checks
+├── tests/buttons/                # press/release debounce host checks
 ├── hardware/
 ├── enclosure/
 ├── assets/sprites/
@@ -417,6 +424,17 @@ c++ -std=c++17 \
 /tmp/fwf-gear-overlay-tests
 ```
 
+Button tests simulate press/release bounce, long holds, independent inputs,
+held-at-wake B, activity timestamps, millis rollover, and 100 complete cycles:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/buttons/stubs -Ialtoids-pet/firmware/altoids_pet \
+  altoids-pet/tests/buttons/test_buttons.cpp -o /tmp/fwf-buttons-tests
+/tmp/fwf-buttons-tests
+```
+
 Source comparisons check that networking/time/cache, power logic, the OLED
 partial-update driver, idle/weather scheduler, base sprite artwork, timer, sound,
 save model, and pin configuration remain unchanged by the screens/gear layer.
@@ -428,6 +446,11 @@ On the physical device:
 - Open JOURNAL, cycle all four pages, and compare totals, dates, latest weather,
   counts and discovery dots with exported JSON. Confirm B changes nothing and
   C returns to the same menu entry.
+- Press/hold/release A in the menu, JOURNAL, GEAR and timer setup. Each cycle
+  should advance exactly once on press-down, with no repeat while held or when
+  released. Allow at least 120 ms of release before the next press. Check one B
+  action and one C return per cycle; hold B while waking, then release and press
+  again to verify only the fresh press interacts with the pet.
 - Open RECORDS and check positive/negative temperatures and dates against JSON.
   Check empty-journal messages using the host tests or a deliberately confirmed
   test import after exporting your real buddy.
