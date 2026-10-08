@@ -4,6 +4,7 @@
 #include "weather.h"
 #include "sound.h"
 #include "sprites.h"
+#include "gear_overlay.h"
 
 // ==================================================
 // PET STATE
@@ -297,6 +298,10 @@ void drawPet(
   // 48x48 presentation inside the old 48x64 anchor preserves the feet baseline
   // and existing B hop, focus book, heart, and DONE bounce coordinates.
   drawKitsuneSprite(sprite, x, y + 16, earOffset, crouching);
+  GearId weatherAccessory = GearId::NONE;
+  if (expressIdle && idleAction == IdleAction::UMBRELLA) weatherAccessory = GearId::UMBRELLA;
+  if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) weatherAccessory = GearId::WINTER_SCARF;
+  drawEquippedGear(x, y + 16, crouching, sprite == KITSUNE_BOUNCE, weatherAccessory);
 
   if (expressIdle && idleAction == IdleAction::UMBRELLA) {
     // Chunky canopy beside the pet, entirely below the clock/weather header.

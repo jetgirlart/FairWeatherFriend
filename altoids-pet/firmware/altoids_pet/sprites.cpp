@@ -2,7 +2,7 @@
 #include "display.h"
 
 void drawKitsuneSprite(const uint8_t *bitmap, int x, int y,
-                       uint8_t earOffset, bool crouching) {
+                       uint8_t earOffset, bool crouching, uint16_t color) {
   constexpr uint8_t width = KITSUNE_WIDTH * 2;
   constexpr uint8_t height = KITSUNE_HEIGHT * 2;
   constexpr uint8_t stride = width / 8;
@@ -23,7 +23,7 @@ void drawKitsuneSprite(const uint8_t *bitmap, int x, int y,
     }
   }
   // RAM-bitmap overload: compose into the existing framebuffer only.
-  display.drawBitmap(x, y, scaled, width, height - (crouching ? 3 : 0), SH110X_WHITE);
+  display.drawBitmap(x, y, scaled, width, height - (crouching ? 3 : 0), color);
 }
 
 // Original outline kitsune artwork. Each comment is its corresponding row:

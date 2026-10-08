@@ -19,6 +19,6 @@ extern const uint8_t KITSUNE_BOUNCE[KITSUNE_BITMAP_BYTES] PROGMEM;
 extern const uint8_t KITSUNE_LOOK_UP[KITSUNE_BITMAP_BYTES] PROGMEM;
 
 // Crisp 2x presentation (48x48). Offsets are in physical OLED pixels.
-// The base artwork stays 24x24; accessories are drawn by pet/display code.
+// The base artwork stays 24x24. color defaults to white; gear masks use black.
 void drawKitsuneSprite(const uint8_t *bitmap, int x, int y,
-                       uint8_t earOffset = 0, bool crouching = false);
+                       uint8_t earOffset = 0, bool crouching = false, uint16_t color = 1);

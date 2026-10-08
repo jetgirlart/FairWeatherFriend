@@ -881,11 +881,6 @@ void drawHome() {
   ) {
 
     petY = 23;
-
-    drawHeart(
-      88,
-      35
-    );
   }
 
   // Pet
@@ -896,6 +891,9 @@ void drawHome() {
     sleeping,
     blinking
   );
+
+  // Hearts sit in front of cosmetic gear, including a held umbrella.
+  if (petReacting && !sleeping) drawHeart(88, 35);
 
   // Ground
 

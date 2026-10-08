@@ -75,6 +75,8 @@ altoids-pet/
 │   ├── display.cpp / display.h
 │   ├── pet.cpp / pet.h
 │   ├── sprites.cpp / sprites.h
+│   ├── gear_sprites.cpp / gear_sprites.h
+│   ├── gear_overlay.cpp / gear_overlay.h
 │   ├── weather.cpp / weather.h
 │   ├── power.cpp / power.h
 │   ├── timer.cpp / timer.h
@@ -87,6 +89,7 @@ altoids-pet/
 │   └── config.h                  # local, gitignored
 ├── tests/journal/                # save/observation host checks
 ├── tests/journal_ui/             # screen/control host checks
+├── tests/gear_overlay/           # bitmap/composition host checks
 ├── hardware/
 ├── enclosure/
 ├── assets/sprites/
@@ -100,6 +103,8 @@ altoids-pet/
 - `pet`: temporary visual moods, B reaction, sleep schedule, and non-blocking
   idle/weather animation state machines. No permanent care/progression stats.
 - `sprites`: PROGMEM kitsune artwork and bitmap composition.
+- `gear_sprites`: independent PROGMEM cosmetic foreground/mask bitmaps.
+- `gear_overlay`: read-only equipment composition over the current pet frame.
 - `weather`: existing Wi-Fi/NTP/timezone, live fetch, moon/sun calculations, and
   RTC weather cache. A hook at successful live-fetch completion records weather.
 - `power`: existing inactivity sleep, debounce, RTC B pull-up, and wake handling.
@@ -207,9 +212,43 @@ not the committed journal.
 Gear is cosmetic, with no bonuses or care requirements. Unlock flags use bit
 `ID - 1`; discovery flags use bits 0–7 in the category order above. Equipment
 starts at NONE. `equipGear()` rejects locked/invalid items and checkpoints a
-changed selection. The GEAR screen lets you browse/select equipment. **Drawing
-the selected equipment on the home pet remains future artwork/rendering work.**
-Existing weather umbrella/scarf reactions continue independently.
+changed selection. The GEAR screen lets you browse/select equipment. The selected
+item is now drawn over the current kitsune on HOME, FOCUS, and DONE. Existing
+weather umbrella/scarf reactions continue independently.
+
+### Cosmetic overlay layer
+
+`gear_sprites.cpp` contains seven separate 24×24 foreground bitmaps, with local
+occlusion masks for the cap, umbrella, coats, scarf, and boots. Each bitmap is
+72 MSB-first bytes in PROGMEM, with empty pixels outside the accessory. They
+contain no duplicate pet frames. Sunglasses are outline-only and leave the
+existing eye interiors visible for blink/look expressions.
+
+`gear_overlay.cpp` reads `getBuddySave().equippedGear` without mutating progress.
+NONE, invalid IDs, or unavailable/protected saves draw nothing. The layer reuses
+the existing 2× bitmap expansion and three-row torso-crouch transform. Masks
+paint only local covered pixels black in RAM, followed by white accessory pixels;
+transparent pixels do not erase the background. No new framebuffer or display
+transfer is introduced.
+
+Layer order is weather background → base kitsune → equipped gear → weather
+reaction accessories → heart/focus book. Gear follows the already-computed
+B hop, idle bounce, snow shiver, and DONE offsets. Boots also follow the bounce
+sprite's lifted paws. The hat/glasses remain rigid during the ear-tip twitch;
+the held umbrella remains rigid during a body crouch. Gear stays visible on
+sleeping pets without adding any awake animation.
+
+An active umbrella/scarf weather reaction temporarily supplies that same
+equipped item, preventing duplicate umbrellas/scarves. Other equipment remains
+visible beneath the weather accessory. The original weather reaction graphics,
+timing and cancellation behavior are unchanged. Hearts and the focus book
+remain in front, including when an umbrella is equipped.
+
+To replace an accessory, edit its named foreground/mask arrays in
+`gear_sprites.cpp`. Keep the base 24×24 coordinates, three bytes per row, and
+mask silhouette aligned. The umbrella uses a separate held-item offset; all
+other items use the base sprite anchor. No pet-state or progression changes are
+needed. Unlock rules and equipment NVS storage remain in their existing modules.
 
 The menu is WEATHER, TIMER, JOURNAL, RECORDS, GEAR, SETTINGS. WEATHER and TIMER
 retain their first two positions and existing controls. The six entries fit
@@ -364,9 +403,24 @@ c++ -std=c++17 \
 /tmp/fwf-journal-ui-tests
 ```
 
+Gear-overlay tests use a pixel-accurate monochrome bitmap stub plus the actual
+pet, sprite, and overlay code. They verify transparent/masked pixels for every
+item, screen bounds, no-op IDs/protected saves, sleep/focus/DONE poses, eye
+visibility, ear/bounce/shiver/crouch alignment, duplicate-weather-item suppression,
+stale-weather recovery, and unchanged animation frame gating:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/gear_overlay/stubs -Ialtoids-pet/firmware/altoids_pet \
+  altoids-pet/tests/gear_overlay/test_gear_overlay.cpp -o /tmp/fwf-gear-overlay-tests
+/tmp/fwf-gear-overlay-tests
+```
+
 Source comparisons check that networking/time/cache, power logic, the OLED
-partial-update driver, idle/weather scheduler, sprites, timer, sound, save model,
-and pin configuration remain unchanged by the new screens. The full
+partial-update driver, idle/weather scheduler, base sprite artwork, timer, sound,
+save model, and pin configuration remain unchanged by the screens/gear layer.
+The shared bitmap renderer adds a color argument for local gear masks. The full
 XIAO ESP32-S3 build is also verified. No hardware upload/test was performed here.
 
 On the physical device:
@@ -380,6 +434,12 @@ On the physical device:
 - Browse all eight GEAR choices. Verify locked-item rejection, equip an unlocked
   item, select NONE to remove it, and reopen the screen to check EQUIPPED status.
   Reboot/reflash with normal NVS preservation and verify the selection persists.
+- Return HOME after equipping each unlocked item: check its outline, mask and
+  face/ear/tail alignment. Check blink/look visibility with glasses, hops and
+  lifted boots, snow shiver, storm crouch, and sleeping appearance. With umbrella
+  or scarf equipped, verify the matching weather reaction shows a single item
+  and returns to the equipped art afterward. Confirm B hearts and the focus book
+  remain in front, DONE celebration still works, and no trails/black flashes occur.
 - Leave each screen idle: no repeated refresh or flash should occur. Check
   normal 30-second sleep/B wake, weather/timer controls, sound and home animations.
   When practical, import a valid different buddy while a screen is open and verify
