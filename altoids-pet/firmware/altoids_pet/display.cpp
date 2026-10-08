@@ -2,6 +2,7 @@
 #include "journal_ui.h"
 #include "buddy_setup.h"
 #include "pet.h"
+#include "sprites.h"
 #include "weather.h"
 #include "timer.h"
 // ==================================================
@@ -481,6 +482,7 @@ void centeredText(int y, const char *text, uint8_t size = 2) {
   display.print(text);
 }
 void petAt(int x, int y, bool sleeping, bool closed) {
+  setSpriteOrigin(x, y);
   display.beginPet(x, y); drawPet(0, 0, sleeping, closed); display.endPet();
 }
 void iconAt(int x, int y) {
@@ -503,12 +505,12 @@ void drawHome() {
   drawTime();
   iconAt(201, 28);
   bool sleeping = isPetSleeping();
-  int y = petReacting && !sleeping ? 56 : 65;
-  petAt(84, y, sleeping, blinking);
+  int y = petReacting && !sleeping ? 47 : 56;
+  petAt(72, y, sleeping, blinking);
   if (petReacting && !sleeping) {
-    display.beginPet(156, 74); drawHeart(0, 0); display.endPet();
+    display.beginPet(168, 69); drawHeart(0, 0); display.endPet();
   }
-  display.drawFastHLine(30, 171, 180, COLOR_MUTED);
+  display.drawFastHLine(26, 182, 180, COLOR_MUTED);
   if (weatherValid) {
     char text[16]; snprintf(text, sizeof(text), "%d F", temperatureF);
     display.setTextColor(COLOR_TEXT); centeredText(188, text, 2);
@@ -705,13 +707,13 @@ void drawFocusTimer(uint32_t seconds) {
   char text[12]; snprintf(text, sizeof(text), "%02lu:%02lu", static_cast<unsigned long>(seconds / 60), static_cast<unsigned long>(seconds % 60));
   centeredText(55, text, 5);
   bool sleeping = isPetSleeping();
-  petAt(84, 109, sleeping, false);
+  petAt(72, 88, sleeping, false);
   if (!sleeping) {
-    display.fillRect(99, 178, 42, 20, COLOR_BACKGROUND);
-    display.drawRect(99, 178, 42, 20, COLOR_WARM);
-    display.drawLine(120, 178, 120, 196, COLOR_WARM);
-    display.drawLine(104, 184, 114, 184, COLOR_WARM);
-    display.drawLine(125, 184, 135, 184, COLOR_WARM);
+    display.fillRect(94, 185, 58, 22, COLOR_BACKGROUND);
+    display.drawRect(94, 185, 58, 22, COLOR_WARM);
+    display.drawLine(123, 185, 123, 205, COLOR_WARM);
+    display.drawLine(100, 192, 116, 192, COLOR_WARM);
+    display.drawLine(130, 192, 146, 192, COLOR_WARM);
   }
   display.display();
 }
@@ -720,8 +722,8 @@ void drawTimerDone(uint32_t frame) {
   centeredText(12, "DONE", 4);
   bool sleeping = isPetSleeping();
   bool celebrate = !sleeping && frame < 6;
-  petAt(84, 76 - (celebrate && frame % 2 == 0 ? 3 : 0), sleeping, false);
-  if (celebrate) { display.beginPet(156, 87); drawHeart(0, 0); display.endPet(); }
+  petAt(72, 62 - (celebrate && frame % 2 == 0 ? 3 : 0), sleeping, false);
+  if (celebrate) { display.beginPet(168, 78); drawHeart(0, 0); display.endPet(); }
   centeredText(217, "C: HOME", 2);
   display.display();
 }

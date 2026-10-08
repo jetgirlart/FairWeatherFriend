@@ -8,13 +8,14 @@ namespace {
 void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet) {
   const uint8_t *art = nullptr;
   const uint8_t *mask = nullptr;
+  int pixelOffsetY = 0;
   switch (equipped) {
     case GearId::FIELD_CAP: art = GEAR_FIELD_CAP; mask = GEAR_FIELD_CAP_MASK; break;
     // Outline lenses leave the existing blink/look eyes visible through them.
     case GearId::SUNGLASSES: art = GEAR_SUNGLASSES; break;
     case GearId::UMBRELLA:
       art = GEAR_UMBRELLA; mask = GEAR_UMBRELLA_MASK;
-      x += 40; y -= 10;
+      x += 48; y -= 12;
       crouching = false; // Rigid accessory; only torso clothing compresses.
       break;
     case GearId::RAINCOAT: art = GEAR_RAINCOAT; mask = GEAR_RAINCOAT_MASK; break;
@@ -23,15 +24,15 @@ void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet
     case GearId::BOOTS:
       art = GEAR_BOOTS; mask = GEAR_BOOTS_MASK;
       // BOUNCE artwork lifts the paws one source pixel, in addition to the hop.
-      if (liftedFeet) y -= 2;
+      if (liftedFeet) pixelOffsetY = -2;
       break;
     case GearId::NONE:
     default: return;
   }
   // Hat/glasses stay rigid while the ear tip twitches independently. All layers
-  // use the base's exact 2x bitmap expansion and body-crouch row mapping.
-  if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, COLOR_BACKGROUND);
-  drawKitsuneSprite(art, x, y, 0, crouching, petPalette.gear[static_cast<uint8_t>(equipped)]);
+  // use the base's native 2x pixels and the shared body-crouch row mapping.
+  if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, COLOR_BACKGROUND, pixelOffsetY);
+  drawKitsuneSprite(art, x, y, 0, crouching, petPalette.gear[static_cast<uint8_t>(equipped)], pixelOffsetY);
 }
 
 } // namespace
@@ -45,4 +46,8 @@ void drawEquippedGear(int x, int y, bool crouching, bool liftedFeet, GearId fore
     if (gear != foregroundAccessory && gearFitsSlot(gear, slot))
       drawGearItem(gear, x, y, crouching, liftedFeet);
   }
+}
+
+void drawWeatherGear(GearId gear, int x, int y, bool crouching) {
+  drawGearItem(gear, x, y, crouching, false);
 }

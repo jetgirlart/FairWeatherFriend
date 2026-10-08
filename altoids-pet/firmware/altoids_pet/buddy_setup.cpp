@@ -27,7 +27,8 @@ void drawSetup() {
     text(18, "READY", 3); text(61, "Ready for"); text(81, "field work!");
   }
   // Preview the actual expression mask and role renderer, with no saved gear.
-  display.beginPet(84, page == SetupPage::READY ? 106 : 89);
+  setSpriteOrigin(72, page == SetupPage::READY ? 102 : 78);
+  display.beginPet(72, page == SetupPage::READY ? 102 : 78);
   drawColoredKitsune(page == SetupPage::READY ? KITSUNE_HAPPY : KITSUNE_IDLE,
                      0, 0, highlighted);
   display.endPet(); display.display();

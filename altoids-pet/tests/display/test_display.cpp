@@ -30,6 +30,7 @@ void Adafruit_ST7789::enableSleep(bool on){assert(!displayOn && backlight==LOW);
 #include "../../firmware/altoids_pet/display_surface.cpp"
 #include "../../firmware/altoids_pet/palette.cpp"
 #include "../../firmware/altoids_pet/sprites.cpp"
+#include "../../firmware/altoids_pet/kitsune_assets.cpp"
 #ifndef FWF_LAYOUT_TEST
 int main(){
  initializeDisplayBus();initializeDisplay();assert(backlight==LOW && windows==0);
@@ -40,35 +41,29 @@ int main(){
  assert(panel==first);display.display();assert(windows==0); // Never transfer RAM clear.
  display.drawPixel(239,239,COLOR_COOL);display.display();assert(windows==1 && transferred==256);
  assert(panel.back()==COLOR_COOL);windows=transferred=0;
- display.clearDisplay();display.beginPet(60,70);drawKitsuneSprite(KITSUNE_IDLE,0,0,0,false,0xA55A);display.endPet();
- // Every source pixel becomes exactly a 3x3 block, including transparent areas.
- for(int y=0;y<72;y++)for(int x=0;x<72;x++){
-   bool bit=KITSUNE_IDLE[(y/3)*3+(x/3)/8]&(0x80>>((x/3)%8));
-   assert(display.getBuffer()[(70+y)*240+60+x]==(bit?0xA55A:COLOR_BACKGROUND));
- }
- // Role palettes reuse every existing expression: exact 3x blocks and transparent exterior.
+ // Native 48x48 role data produces exact 2x2 pixels for every expression/palette.
  const uint8_t *expressions[]={KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,
-                              KITSUNE_HAPPY,KITSUNE_EXCITED,KITSUNE_SLEEPY,KITSUNE_SLEEP,KITSUNE_BOUNCE,KITSUNE_LOOK_UP};
- uint8_t roles[576];buildKitsuneRoles(KITSUNE_IDLE,roles);
- assert(roles[0]==0 && roles[9*24+5]==static_cast<uint8_t>(SpritePixelRole::DETAIL));
+ KITSUNE_HAPPY,KITSUNE_EXCITED,KITSUNE_SLEEPY,KITSUNE_SLEEP,KITSUNE_BOUNCE,KITSUNE_LOOK_UP,KITSUNE_FOCUS};
+ uint8_t roles[KITSUNE_PIXEL_COUNT];
  for(uint8_t id=0;id<5;++id)for(auto art:expressions){
-   display.clearDisplay();display.beginPet(60,70);drawColoredKitsune(art,0,0,static_cast<FurPaletteId>(id));display.endPet();
-   buildKitsuneRoles(art,roles);const auto &colors=furPalette(static_cast<FurPaletteId>(id));
-   const uint16_t expected[]={COLOR_BACKGROUND,colors.outline,colors.primary,colors.accent,colors.detail};
-   bool present[5]={};
-   for(int y=0;y<72;y++)for(int x=0;x<72;x++){
-     uint8_t role=roles[(y/3)*24+x/3];assert(role<=4);present[role]=true;
-     assert(display.getBuffer()[(70+y)*240+60+x]==expected[role]);
-   }
-   for(bool exists:present)assert(exists);
+  display.clearDisplay();setSpriteOrigin(60,70);drawColoredKitsune(art,0,0,static_cast<FurPaletteId>(id));
+  buildKitsuneRoles(art,roles);const auto &colors=furPalette(static_cast<FurPaletteId>(id));
+  const uint16_t expected[]={COLOR_BACKGROUND,colors.outline,colors.primary,colors.accent,colors.detail};
+  bool present[5]={};
+  for(int y=0;y<96;y++)for(int x=0;x<96;x++){
+   uint8_t role=roles[(y/2)*48+x/2];assert(role<=4);present[role]=true;
+   assert(display.getBuffer()[(70+y)*240+60+x]==expected[role]);
+  }
+  for(bool exists:present)assert(exists);
+  assert(roles[0]==0);
  }
  display.display();assert(windows>0 && windows<225);
  sleepDisplay();assert(backlight==LOW && held && panelSleeping && !displayOn);
  windows=0;display.display();assert(windows==0 && backlight==LOW);
  initializeDisplayBus();initializeDisplay();assert(!held && backlight==LOW);
- display.beginPet(60,70);drawKitsuneSprite(KITSUNE_SLEEP,0,0);display.endPet();
+ setSpriteOrigin(60,70);drawColoredKitsune(KITSUNE_SLEEP,0,0,FurPaletteId::ORANGE);
  display.display();assert(windows==225 && backlight==HIGH);
- puts("PASS: exact SPI pins/no MISO, RAM-only clear, unchanged-frame suppression, single changed tile, full resync, runtime color and exact 3x sprite scaling, backlight/sleep/hold/wake sequence.");
+ puts("PASS: exact SPI pins/no MISO, RAM-only clear, unchanged-frame suppression, single changed tile, full resync, runtime color and exact 2x native 48x48 role scaling, backlight/sleep/hold/wake sequence.");
 }
 
 #endif

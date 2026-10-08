@@ -5,11 +5,10 @@
 #include "pet.h"
 #include "weather.h"
 #include "gear_sprites.h"
-
 SerialType Serial;
 PetPalette petPalette;
-unsigned long fakeMillis = 0;
-uint16_t pixels[128*128] = {};
+unsigned long fakeMillis=0;
+uint16_t pixels[240*240]={};
 std::vector<DrawCall> bitmapCalls;
 unsigned pushes=0,clears=0,umbrellas=0,scarves=0;
 DisplaySurface fakeDisplay;
@@ -17,140 +16,108 @@ DisplaySurface &display=fakeDisplay;
 ScreenMode currentScreen=HOME;
 BuddySaveData data;
 bool available=true;
-const BuddySaveData &getBuddySave() {return data;}
-bool journalAvailable() {return available;}
+const BuddySaveData &getBuddySave(){return data;}
+bool journalAvailable(){return available;}
 bool timeValid=true,weatherValid=true;
 int currentHour=12;
 WeatherState weatherState=WEATHER_CLEAR;
-bool isDaylight() {return currentHour>=7 && currentHour<19;}
-void soundPetInteraction() {}
-void drawHome() {display.clearDisplay();drawPet(40,petReacting?23:29,isPetSleeping(),blinking);display.display();}
-
+bool isDaylight(){return currentHour>=7 && currentHour<19;}
+void soundPetInteraction(){}
+void drawHome(){display.clearDisplay();setSpriteOrigin(72,56);drawPet(0,petReacting?-6:0,isPetSleeping(),blinking);display.display();}
 #include "../../firmware/altoids_pet/palette.cpp"
 #include "../../firmware/altoids_pet/sprites.cpp"
+#include "../../firmware/altoids_pet/kitsune_assets.cpp"
 #include "../../firmware/altoids_pet/gear_sprites.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
-bool equipJournalGear(GearSlot, GearId) { return false; }
+bool equipJournalGear(GearSlot,GearId){return false;}
 #include "../../firmware/altoids_pet/gear_overlay.cpp"
 #include "../../firmware/altoids_pet/pet.cpp"
-
-void setOnlyGear(GearId gear) {
-  for (auto &item : data.equippedSlots) item = GearId::NONE;
-  auto slot = gearSlot(gear);
-  if (slot != GearSlot::COUNT) data.equippedSlots[static_cast<uint8_t>(slot)] = gear;
+void rest(){
+ currentScreen=HOME;currentHour=12;available=true;weatherValid=true;petReacting=false;
+ idlePaused=false;idleMood=PetMood::CALM;petState.mood=PetMood::CALM;
+ idleAction=IdleAction::REST;idleStep=0;blinking=false;
+ nextBlinkTime=fakeMillis+100000;idleBlinkDeadline=nextBlinkTime;
+ reactionWeather=weatherState;reactionDaylight=isDaylight();setSpriteOrigin(72,56);
 }
-void rest() {
-  currentScreen=HOME;currentHour=12;available=true;weatherValid=true;petReacting=false;
-  idlePaused=false;idleMood=PetMood::CALM;petState.mood=PetMood::CALM;
-  idleAction=IdleAction::REST;idleStep=0;blinking=false;
-  nextBlinkTime=fakeMillis+100000;idleBlinkDeadline=nextBlinkTime;
-  reactionWeather=weatherState;reactionDaylight=isDaylight();
-  bitmapCalls.clear();umbrellas=scarves=0;
-}
-void checkTransparentLayer(GearId gear,const uint8_t *art,const uint8_t *mask) {
-  setOnlyGear(gear);
-  // A background pattern makes unintended transparent-pixel erasure visible.
-  for(unsigned i=0;i<128*128;i++)pixels[i]=(i%5)==0;
-  uint16_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
-  bitmapCalls.clear();unsigned transfers=pushes;
-  drawEquippedGear(40,45,false,false);
-  assert(pushes==transfers && bitmapCalls.size()==(mask?2:1));
-  int x=gear==GearId::UMBRELLA?80:40,y=gear==GearId::UMBRELLA?35:45;
-  for(int Y=0;Y<128;Y++)for(int X=0;X<128;X++) {
-    uint16_t expected=before[Y*128+X];int sx=(X-x)/2,sy=(Y-y)/2;
-    if(X>=x && X<x+48 && Y>=y && Y<y+48) {
-      unsigned index=sy*3+sx/8,bit=0x80>>(sx%8);
-      if(mask && (mask[index]&bit))expected=COLOR_BACKGROUND;
-      if(art[index]&bit)expected=petPalette.gear[static_cast<uint8_t>(gear)];
-    }
-    assert(pixels[Y*128+X]==expected);
+struct Item{GearId id;const uint8_t *art,*mask;};
+const Item items[]={
+ {GearId::FIELD_CAP,GEAR_FIELD_CAP,GEAR_FIELD_CAP_MASK},
+ {GearId::SUNGLASSES,GEAR_SUNGLASSES,nullptr},
+ {GearId::UMBRELLA,GEAR_UMBRELLA,GEAR_UMBRELLA_MASK},
+ {GearId::RAINCOAT,GEAR_RAINCOAT,GEAR_RAINCOAT_MASK},
+ {GearId::WINTER_SCARF,GEAR_WINTER_SCARF,GEAR_WINTER_SCARF_MASK},
+ {GearId::WINTER_COAT,GEAR_WINTER_COAT,GEAR_WINTER_COAT_MASK},
+ {GearId::BOOTS,GEAR_BOOTS,GEAR_BOOTS_MASK}};
+void expectedMask(std::vector<uint16_t>&out,const uint8_t *bits,int x,int y,uint16_t color){
+ if(!bits)return;
+ for(int sy=0;sy<48;++sy)for(int sx=0;sx<48;++sx)if(bits[sy*6+sx/8]&(0x80>>(sx%8)))
+  for(int dy=0;dy<2;++dy)for(int dx=0;dx<2;++dx){
+   int X=x+2*sx+dx,Y=y+2*sy+dy;assert(X>=0 && X<240 && Y>=0 && Y<240);out[Y*240+X]=color;
   }
 }
-int main() {
-  initializePetState();initializeAnimations();
-  struct Item {GearId gear;const uint8_t *art,*mask;};
-  const Item items[]={
-    {GearId::FIELD_CAP,GEAR_FIELD_CAP,GEAR_FIELD_CAP_MASK},
-    {GearId::SUNGLASSES,GEAR_SUNGLASSES,nullptr},
-    {GearId::UMBRELLA,GEAR_UMBRELLA,GEAR_UMBRELLA_MASK},
-    {GearId::RAINCOAT,GEAR_RAINCOAT,GEAR_RAINCOAT_MASK},
-    {GearId::WINTER_SCARF,GEAR_WINTER_SCARF,GEAR_WINTER_SCARF_MASK},
-    {GearId::WINTER_COAT,GEAR_WINTER_COAT,GEAR_WINTER_COAT_MASK},
-    {GearId::BOOTS,GEAR_BOOTS,GEAR_BOOTS_MASK}
-  };
-  for(auto &item:items)checkTransparentLayer(item.gear,item.art,item.mask);
-  rest();setOnlyGear(GearId::NONE);drawEquippedGear(40,45,false,false);assert(bitmapCalls.empty());
-  data.equippedSlots[0]=static_cast<GearId>(99);drawEquippedGear(40,45,false,false);assert(bitmapCalls.empty());
-  available=false;setOnlyGear(GearId::FIELD_CAP);drawEquippedGear(40,45,false,false);assert(bitmapCalls.empty());
-  // All gear is in bounds for home/B/focus/DONE, sleep and storm poses.
-  for(auto &item:items)for(auto screen:{HOME,FOCUS_SCREEN,TIMER_DONE})for(bool sleeping:{false,true}) {
-    rest();setOnlyGear(item.gear);currentScreen=screen;
-    int y=screen==HOME?29:screen==FOCUS_SCREEN?55:40;
-    drawPet(40,y,sleeping,false);
-    assert(bitmapCalls.front().x==40 && bitmapCalls.front().y==y+16);
-    assert(bitmapCalls.size()==(item.mask?6:5));
-  }
-  // Every slot simultaneously: exact compositing order and shared animated anchors.
-  for(auto &item:data.equippedSlots)item=GearId::NONE;
-  const GearId outfit[]={GearId::RAINCOAT,GearId::BOOTS,GearId::WINTER_SCARF,
-                         GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::UMBRELLA};
-  for(auto gear:outfit)data.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
-  for(auto screen:{HOME,FOCUS_SCREEN,TIMER_DONE})for(bool sleeping:{false,true}) {
-    rest();currentScreen=screen;int y=screen==HOME?29:screen==FOCUS_SCREEN?55:40;
-    display.clearDisplay();drawPet(40,y,sleeping,false);
-    assert(bitmapCalls.size()==15); // Base + five mask/art pairs + glasses.
-    uint16_t rendered[sizeof(pixels)];memcpy(rendered,pixels,sizeof(pixels));
-    display.clearDisplay();drawColoredKitsune(sleeping?KITSUNE_SLEEP:screen==TIMER_DONE?KITSUNE_HAPPY:KITSUNE_IDLE,40,y+16,data.furPalette);
-    for(auto gear:outfit)drawGearItem(gear,40,y+16,false,false);
-    assert(memcmp(rendered,pixels,sizeof(pixels))==0);
-  }
-  rest();idleAction=IdleAction::UMBRELLA;weatherState=reactionWeather=WEATHER_RAIN;
-  drawPet(40,29,false,false);assert(bitmapCalls.size()==13 && umbrellas==1);
-  rest();idleAction=IdleAction::SNOW_SHIVER;weatherState=reactionWeather=WEATHER_SNOW;
-  drawPet(40,29,false,false);assert(bitmapCalls.size()==13 && scarves==2);
-  rest();idleAction=IdleAction::STORM_CROUCH;weatherState=reactionWeather=WEATHER_STORM;
-  drawPet(40,29,false,false);
-  for(auto call:bitmapCalls)assert(call.x==80 ? call.y==38 && call.h==48 : call.y==48 && call.h==45);
-  // Ear tip and gaze/blink scheduler survive: glasses don't clear eye interiors.
-  for(auto sprite:{KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,KITSUNE_LOOK_UP}) {
-    display.clearDisplay();drawKitsuneSprite(sprite,40,45);
-    uint16_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
-    setOnlyGear(GearId::SUNGLASSES);drawEquippedGear(40,45,false,false);
-    for(int y=9;y<=11;y++)for(int x:{4,5,6,12,13,14})for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)
-      assert(pixels[(45+y*2+dy)*128+40+x*2+dx]==before[(45+y*2+dy)*128+40+x*2+dx]);
-  }
-  rest();setOnlyGear(GearId::FIELD_CAP);idleAction=IdleAction::EAR_TWITCH;idleStep=1;
-  drawPet(40,29,false,false);assert(bitmapCalls.back().y==45);
-  // Boots track the lifted-paw frame as well as the existing 1/2-pixel hop.
-  rest();setOnlyGear(GearId::BOOTS);idleAction=IdleAction::BOUNCE;
-  for(int step=0;step<3;step++) {
-    idleStep=step;bitmapCalls.clear();drawPet(40,29,false,false);
-    assert(bitmapCalls.front().y==(step==1?43:44));assert(bitmapCalls.back().y==bitmapCalls.front().y-2);
-  }
-  rest();setOnlyGear(GearId::RAINCOAT);idleAction=IdleAction::STORM_CROUCH;
-  weatherState=reactionWeather=WEATHER_STORM;drawPet(40,29,false,false);
-  for(auto call:bitmapCalls)assert(call.y==48 && call.h==45);
-  // Snow's shiver offset applies equally to coat layers and the pet.
-  rest();setOnlyGear(GearId::WINTER_COAT);idleAction=IdleAction::SNOW_SHIVER;
-  weatherState=reactionWeather=WEATHER_SNOW;
-  for(int step=0;step<4;step++) {
-    idleStep=step;bitmapCalls.clear();drawPet(40,29,false,false);
-    for(auto call:bitmapCalls)assert(call.x==(step%2?41:39));
-  }
-  // Existing weather supplies an equipped umbrella/scarf temporarily, not two.
-  rest();setOnlyGear(GearId::UMBRELLA);idleAction=IdleAction::UMBRELLA;
-  weatherState=reactionWeather=WEATHER_RAIN;drawPet(40,29,false,false);
-  assert(bitmapCalls.size()==4 && umbrellas==1);
-  rest();setOnlyGear(GearId::WINTER_SCARF);idleAction=IdleAction::SNOW_SHIVER;
-  weatherState=reactionWeather=WEATHER_SNOW;drawPet(40,29,false,false);
-  assert(bitmapCalls.size()==4 && scarves==2);
-  // A stale weather action must not suppress equipped gear after weather changes.
-  weatherState=WEATHER_CLEAR;bitmapCalls.clear();drawPet(40,29,false,false);assert(bitmapCalls.size()==6);
-  rest();setOnlyGear(GearId::UMBRELLA);assert(interactWithPet());drawPet(40,23,false,false);
-  assert(bitmapCalls[0].y==39 && bitmapCalls.back().x==80 && bitmapCalls.back().y==29);
-  // Gear adds zero display transfers; the existing animation gate pushes once.
-  rest();setOnlyGear(GearId::FIELD_CAP);lastAnimationTime=fakeMillis;unsigned before=pushes;
-  fakeMillis+=249;updateAnimations();assert(pushes==before);
-  fakeMillis+=1;updateAnimations();assert(pushes==before+1);
-  puts("PASS: all gear/masks/transparent pixels, no-op NONE/protected IDs, bounds, sleep/focus/DONE, eye visibility, ear/bounce/shiver/crouch alignment, weather replacement, stale-weather recovery and unchanged frame gating.");
+void expectedItem(std::vector<uint16_t>&out,GearId gear,int x,int y,bool lifted=false){
+ for(auto item:items)if(item.id==gear){
+  if(gear==GearId::UMBRELLA){x+=72;y-=18;}
+  if(gear==GearId::BOOTS && lifted)y-=2;
+  expectedMask(out,item.mask,x,y,COLOR_BACKGROUND);
+  expectedMask(out,item.art,x,y,petPalette.gear[static_cast<uint8_t>(gear)]);
+ }
+}
+void checkPixels(const std::vector<uint16_t>&expected){assert(memcmp(expected.data(),pixels,sizeof(pixels))==0);}
+int main(){
+ initializePetState();initializeAnimations();
+ for(auto item:items){
+  rest();for(auto &slot:data.equippedSlots)slot=GearId::NONE;
+  data.equippedSlots[static_cast<uint8_t>(gearSlot(item.id))]=item.id;
+  for(int i=0;i<240*240;++i)pixels[i]=i%5==0?COLOR_WARM:COLOR_BACKGROUND;
+  std::vector<uint16_t> expected(pixels,pixels+240*240);
+  expectedItem(expected,item.id,72,80);unsigned transfers=pushes;
+  drawEquippedGear(0,16,false,false);checkPixels(expected);assert(pushes==transfers);
+ }
+ const GearId order[]={GearId::RAINCOAT,GearId::BOOTS,GearId::WINTER_SCARF,
+                       GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::UMBRELLA};
+ for(auto &slot:data.equippedSlots)slot=GearId::NONE;
+ for(auto gear:order)data.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
+ for(auto screen:{HOME,FOCUS_SCREEN,TIMER_DONE})for(bool sleeping:{false,true}){
+  rest();currentScreen=screen;int y=screen==HOME?56:screen==FOCUS_SCREEN?88:62;
+  setSpriteOrigin(72,y);display.clearDisplay();drawPet(0,0,sleeping,false);
+  std::vector<uint16_t> actual(pixels,pixels+240*240);
+  display.clearDisplay();drawColoredKitsune(sleeping?KITSUNE_SLEEP:screen==TIMER_DONE?KITSUNE_HAPPY:screen==FOCUS_SCREEN?KITSUNE_FOCUS:KITSUNE_IDLE,0,16,data.furPalette);
+  std::vector<uint16_t> expected(pixels,pixels+240*240);
+  for(auto gear:order)expectedItem(expected,gear,72,y+24);
+  assert(expected==actual);
+ }
+ // Every pose and every palette with all slots: base transform and clothing agree.
+ for(uint8_t id=0;id<5;++id)for(auto action:{IdleAction::LOOK_LEFT,IdleAction::LOOK_RIGHT,IdleAction::BOUNCE,IdleAction::EAR_TWITCH,IdleAction::STORM_CROUCH,IdleAction::SNOW_SHIVER}){
+  rest();data.furPalette=static_cast<FurPaletteId>(id);idleAction=action;idleStep=1;
+  weatherState=reactionWeather=action==IdleAction::STORM_CROUCH?WEATHER_STORM:action==IdleAction::SNOW_SHIVER?WEATHER_SNOW:WEATHER_CLEAR;
+  display.clearDisplay();drawPet(0,0,false,false);
+  std::vector<uint16_t> actual(pixels,pixels+240*240);
+  int x=action==IdleAction::SNOW_SHIVER?1:0,y=action==IdleAction::BOUNCE?-2:action==IdleAction::STORM_CROUCH?3:0;
+  const uint8_t *frame=action==IdleAction::LOOK_LEFT?KITSUNE_LOOK_LEFT:action==IdleAction::LOOK_RIGHT?KITSUNE_LOOK_RIGHT:action==IdleAction::BOUNCE?KITSUNE_BOUNCE:action==IdleAction::STORM_CROUCH?KITSUNE_BLINK:KITSUNE_IDLE;
+  display.clearDisplay();drawColoredKitsune(frame,x,y+16,data.furPalette,action==IdleAction::EAR_TWITCH?2:0,action==IdleAction::STORM_CROUCH);
+  drawEquippedGear(x,y+16,action==IdleAction::STORM_CROUCH,frame==KITSUNE_BOUNCE,action==IdleAction::SNOW_SHIVER?GearId::WINTER_SCARF:GearId::NONE);
+  if(action==IdleAction::SNOW_SHIVER)drawWeatherGear(GearId::WINTER_SCARF,x,y+16);
+  assert(actual==std::vector<uint16_t>(pixels,pixels+240*240));
+ }
+ // Glasses leave every expression's pupil region untouched, including extreme looks.
+ for(auto frame:{KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,KITSUNE_SLEEP,KITSUNE_FOCUS}){
+  rest();display.clearDisplay();drawColoredKitsune(frame,0,16,data.furPalette);
+  std::vector<uint16_t> before(pixels,pixels+240*240);drawGearItem(GearId::SUNGLASSES,0,16,false,false);
+  for(int y=19;y<=24;y++)for(int x:{11,12,13,14,15,16,26,27,28,29,30,31})
+   for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)assert(pixels[(80+y*2+dy)*240+72+x*2+dx]==before[(80+y*2+dy)*240+72+x*2+dx]);
+ }
+ // Weather reaction draws one matching prop and restores equipped art afterward.
+ rest();weatherState=reactionWeather=WEATHER_RAIN;idleAction=IdleAction::UMBRELLA;idleStep=1;
+ display.clearDisplay();drawPet(0,0,false,false);std::vector<uint16_t> reaction(pixels,pixels+240*240);
+ display.clearDisplay();drawColoredKitsune(KITSUNE_IDLE,0,16,data.furPalette);
+ drawEquippedGear(0,16,false,false,GearId::UMBRELLA);drawWeatherGear(GearId::UMBRELLA,0,17);
+ assert(reaction==std::vector<uint16_t>(pixels,pixels+240*240));
+ weatherState=WEATHER_CLEAR;display.clearDisplay();drawPet(0,0,false,false);
+ std::vector<uint16_t> restored(pixels,pixels+240*240);rest();display.clearDisplay();drawPet(0,0,false,false);
+ assert(restored==std::vector<uint16_t>(pixels,pixels+240*240));
+ available=false;std::vector<uint16_t> before(pixels,pixels+240*240);drawEquippedGear(0,16,false,false);checkPixels(before);
+ rest();lastAnimationTime=fakeMillis;unsigned transfers=pushes;
+ fakeMillis+=249;updateAnimations();assert(pushes==transfers);fakeMillis++;updateAnimations();assert(pushes==transfers+1);
+ puts("PASS: native gear masks/transparency/2x scaling, independent layer order, home/focus/DONE/sleep, all palettes and idle poses, gaze through glasses, shared weather accessories, protected saves and unchanged animation cadence.");
 }

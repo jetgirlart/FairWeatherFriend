@@ -93,6 +93,7 @@ altoids-pet/
 │   ├── display.cpp / display.h
 │   ├── pet.cpp / pet.h
 │   ├── sprites.cpp / sprites.h
+│   ├── kitsune_assets.cpp
 │   ├── gear_sprites.cpp / gear_sprites.h
 │   ├── gear_overlay.cpp / gear_overlay.h
 │   ├── weather.cpp / weather.h
@@ -129,7 +130,7 @@ altoids-pet/
 - `buddy_setup`: first-run welcome/preview/confirmation, without new care mechanics.
 - `pet`: temporary visual moods, B reaction, sleep schedule, and non-blocking
   idle/weather animation state machines. No permanent care/progression stats.
-- `sprites`: PROGMEM kitsune artwork and bitmap composition.
+- `sprites`: native role-map/bitmap composition; `kitsune_assets.cpp` holds the kitsune frames.
 - `gear_sprites`: independent PROGMEM cosmetic foreground/mask bitmaps.
 - `gear_overlay`: read-only equipment composition over the current pet frame.
 - `weather`: existing Wi-Fi/NTP/timezone, live fetch, moon/sun calculations, and
@@ -300,37 +301,37 @@ Existing weather umbrella/scarf reactions continue independently.
 
 ### Cosmetic overlay layer
 
-`gear_sprites.cpp` contains seven separate 24×24 foreground bitmaps, with local
-occlusion masks for the cap, umbrella, coats, scarf, and boots. Each bitmap is
-72 MSB-first bytes in PROGMEM, with empty pixels outside the accessory. They
-contain no duplicate pet frames. Sunglasses are outline-only and leave the
-existing eye interiors visible for blink/look expressions.
+`gear_sprites.cpp` contains seven separate **48×48** foreground bitmaps and
+occlusion masks for the cap, umbrella, coats, scarf, and boots. Each is 288
+MSB-first PROGMEM bytes (six bytes per row). They contain no duplicate pet
+frames. Sunglasses leave eye interiors visible for blink/look expressions.
 
 `gear_overlay.cpp` reads `getBuddySave().equippedSlots` without mutating progress.
-NONE, invalid IDs, or unavailable/protected saves draw nothing. The layer reuses
-the existing 2× bitmap expansion and three-row torso-crouch transform. Masks
-paint only local covered pixels black in RAM, followed by white accessory pixels;
-transparent pixels do not erase the background. No new framebuffer or display
-transfer is introduced.
+NONE, invalid IDs, or unavailable/protected saves draw nothing. Masks paint only
+covered pixels black in RAM, followed by tinted accessory pixels. Transparent
+pixels preserve the background. Native pixels render at exact 2× scale; gear
+shares the base pet's origin, motion and torso-crouch transform. No additional
+framebuffer or display transfer is introduced.
 
-Layer order is weather background → base kitsune → BODY → FEET → NECK → HEAD → FACE → PROP → weather
-reaction accessories → heart/focus book. Gear follows the already-computed
-B hop, idle bounce, snow shiver, and DONE offsets. Boots also follow the bounce
-sprite's lifted paws. The hat/glasses remain rigid during the ear-tip twitch;
-the held umbrella remains rigid during a body crouch. Gear stays visible on
-sleeping pets without adding any awake animation.
+Layer order is weather background → base kitsune → BODY → FEET → NECK → HEAD →
+FACE → PROP → weather reaction accessories → heart/focus book. Cap, glasses,
+scarf, coats and boots are authored against the larger head, neck, torso and
+feet. The umbrella uses a held-item offset of +72/-18 physical pixels from the
+base sprite origin. Boots lift two physical pixels with the BOUNCE feet. Gear
+follows B hops, idle bounces, snow shivers and DONE offsets. Hat/glasses remain
+rigid during ear-tip twitch; the held umbrella remains rigid during crouching.
+Gear remains visible while sleeping without introducing awake animations.
 
-An active umbrella/scarf weather reaction temporarily supplies that same
-equipped item, preventing duplicate umbrellas/scarves. Other equipment remains
-visible beneath the weather accessory. The original weather reaction graphics,
-timing and cancellation behavior are unchanged. Hearts and the focus book
-remain in front, including when an umbrella is equipped.
+Umbrella/scarf weather reactions now use these same separate accessory assets,
+with their existing timing and cancellation behavior. An active reaction
+supplies the matching equipped item once, preventing duplicate accessories.
+Hearts and the focus book remain in front.
 
-To replace an accessory, edit its named foreground/mask arrays in
-`gear_sprites.cpp`. Keep the base 24×24 coordinates, three bytes per row, and
-mask silhouette aligned. The umbrella uses a separate held-item offset; all
-other items use the base sprite anchor. No pet-state or progression changes are
-needed. Unlock rules and equipment NVS storage remain in their existing modules.
+To replace an accessory, edit its foreground/mask arrays in `gear_sprites.cpp`,
+or its authored geometry in `assets/sprites/generate_kitsune.py`. Preserve the
+48×48 canvas, six bytes per row, and alignment of foreground and mask. All
+items except the offset umbrella share the base sprite anchor. Unlock rules and
+equipment NVS storage remain unchanged.
 
 The menu is WEATHER, TIMER, JOURNAL, RECORDS, GEAR, SETTINGS. WEATHER and TIMER
 retain their first two positions and existing controls. The six entries fit
@@ -458,17 +459,21 @@ a ground baseline, then temperature and weather labels. Menus use 28-pixel row
 spacing. Journal/Records/Gear preserve pages, data and controls with larger text;
 long lifetime totals still fit exactly. Focus shows a large countdown above the
 reading pet. UI coordinates are physical TFT pixels. Only pet/accessory
-composition maps the existing local geometry at 3/2, turning the existing 2×
-masks into **exact 3× art (72×72)** without interpolation or timing changes.
+composition preserves existing local motion amplitudes at 3/2, while native
+48×48 art renders at **exact 2× (96×96)**, without interpolation. HOME centers
+the sprite canvas at x=72, y=80 above the ground at y=182. Hop and idle offsets
+remain unchanged. FOCUS/DONE and setup previews use corresponding centered
+origins; the book and hearts remain independent foreground graphics.
 
-`palette.h/.cpp` define the five palettes as RGB565 **outline, primary fur,
-light/accent fur and facial/detail colors**. Transparent pixels draw nothing.
-`buildKitsuneRoles()` in `sprites.cpp` derives the same role map for every 1-bit
-expression: exterior pixels remain transparent, enclosed regions become fur,
-and shared face/ear/muzzle/tail hints assign details and accents. No full sprite
-sets are duplicated per color. `drawRoleSprite()` is a general 24×24 role-map
-renderer reusable for future gear variants; the current gear masks/tints remain
-unchanged. `drawColoredKitsune()` shares the existing scaling/ear/crouch mapping.
+`palette.h/.cpp` define five RGB565 palettes. Sprite pixels explicitly encode
+roles: **0 transparent, 1 outline, 2 primary fur, 3 light/accent fur, 4 facial/detail**.
+`kitsune_assets.cpp` holds eleven native 48×48 PROGMEM role maps, each **1152
+bytes**: two pixels per byte, left pixel in the high nibble, 24 bytes per row.
+`drawColoredKitsune()` reads roles directly from flash and maps them to the saved
+palette. There is no flood-fill inference or duplicated artwork per fur color.
+`buildKitsuneRoles()` unpacks a frame when needed; `drawRoleSprite()` can render
+an unpacked 48×48 role map with an arbitrary palette for future gear variants.
+Current gear remains separate 1-bit masks with its existing tints.
 
 Normal pet rendering reads the saved `furPalette` each frame, so HOME, focus,
 DONE, sleeping poses, expressions and confirmed imports use the same selection.
@@ -482,12 +487,24 @@ and optional sound. It has no lifetime counter or friendship reward. Night-time
 sleep remains authoritative. Occasional blink/double blink, looks, bounce, ear
 twitch, and weather reactions remain non-blocking at the existing frame cadence.
 
-The original PROGMEM kitsune assets remain in `sprites.cpp`: nine base sprites
-plus LOOK_UP. Each is **24×24, 72 bytes**, three MSB-first bytes per row, white
-bits on a transparent background. They render at crisp 3× scale on the TFT. To replace an
-expression, edit its array initializer while preserving the name/dimensions;
-row comments are illustrative only. Keep ear/neck/feet alignment for existing
-transforms/accessories. Umbrella, scarf, book and hearts remain separate overlays.
+Frames are IDLE, BLINK, LOOK_LEFT, LOOK_RIGHT, HAPPY, EXCITED, SLEEPY, SLEEP,
+BOUNCE, LOOK_UP and FOCUS. The existing state machine selects these assets;
+FOCUS adds a quiet inward-paw reading pose beneath the separate book. Sleep,
+blink, mood and reaction precedence remain unchanged.
+
+To replace a frame, edit its named initializer in `kitsune_assets.cpp`, keeping
+48×48 dimensions and the role encoding above. Row comments show `.OFAD` roles.
+Keep head/neck/feet anchors aligned across frames. Alternatively edit the
+standard-library-only authoring script and regenerate both dedicated asset files:
+
+```sh
+python3 altoids-pet/assets/sprites/generate_kitsune.py
+```
+
+Regeneration overwrites `kitsune_assets.cpp` and `gear_sprites.cpp`, so retain
+manual art changes in the generator if using that workflow. No animation or
+save logic changes are needed to replace artwork. Umbrella, scarf, book and
+hearts remain separate overlays.
 
 TIMER still offers 5/10/15/25 minutes: A selects, B starts, C backs out/cancels;
 C on DONE returns home. Running focus prevents normal inactivity sleep. Countdown,
@@ -544,7 +561,7 @@ c++ -std=c++17 \
 /tmp/fwf-journal-ui-tests
 ```
 
-Gear-overlay tests use a pixel-accurate monochrome bitmap stub plus the actual
+Gear-overlay tests use a pixel-accurate RGB565 framebuffer stub plus the actual
 pet, sprite, and overlay code. They verify transparent/masked pixels for every
 item, screen bounds, no-op IDs/protected saves, sleep/focus/DONE poses, eye
 visibility, ear/bounce/shiver/crouch alignment, duplicate-weather-item suppression,
@@ -572,7 +589,7 @@ c++ -std=c++17 \
 The ST7789 transport tests compile the actual Adafruit GFX canvas/bitmap/text
 implementation with a mocked SPI panel. They check exact pin mapping (including
 no MISO), RAM-only clearing, unchanged-frame suppression, changed-tile updates,
-full resynchronization, pixel-perfect 3× art, runtime colors, and backlight/hold/
+full resynchronization, pixel-perfect 2× native 48×48 art, runtime colors, and backlight/hold/
 sleep/wake sequencing. Layout tests exercise actual HOME/weather/menu/timer and
 Journal/Records/Gear rendering, all weather states, simultaneous gear, idle poses,
 sleep, and minute-only partial updates. They write PPM previews to `/tmp`.
@@ -604,7 +621,7 @@ On the physical device:
   B must wake once, cached weather/time must restore without unnecessary Wi-Fi.
 - Watch several minute changes, blink/double blink, looks, ear twitch, B hops,
   bounce, night sleep, and every weather animation. Check no trails/black flashes.
-- Equip all six slots. Verify 3× pixel edges, masks, eyes, ear/tail/feet alignment,
+- Equip all six slots. Verify 2× pixel edges, masks, eyes, ear/tail/feet alignment,
   crouch/shiver/bounce movement, umbrella/scarf replacement and foreground hearts.
 - Browse all menus and Journal pages, Records and Gear slots/items. Check margins,
   longest labels, lifetime counts, footer readability, one action per A cycle,

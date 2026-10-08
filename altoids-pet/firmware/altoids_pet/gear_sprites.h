@@ -1,18 +1,20 @@
 #pragma once
 #include "sprites.h"
 
-// Gear-only layers, never copies of the base pet. Same 24x24/MSB-first format.
+constexpr uint16_t GEAR_BITMAP_BYTES = 48 * 48 / 8;
+
+// Gear-only layers, never copies of the base pet. Native 48x48/MSB-first format.
 // Foreground bits paint white; optional mask bits erase only covered pixels.
-extern const uint8_t GEAR_FIELD_CAP[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_FIELD_CAP_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_SUNGLASSES[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_UMBRELLA[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_UMBRELLA_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_RAINCOAT[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_RAINCOAT_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_WINTER_SCARF[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_WINTER_SCARF_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_WINTER_COAT[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_WINTER_COAT_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_BOOTS[KITSUNE_BITMAP_BYTES] PROGMEM;
-extern const uint8_t GEAR_BOOTS_MASK[KITSUNE_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_FIELD_CAP[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_FIELD_CAP_MASK[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_SUNGLASSES[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_UMBRELLA[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_UMBRELLA_MASK[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_RAINCOAT[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_RAINCOAT_MASK[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_WINTER_SCARF[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_WINTER_SCARF_MASK[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_WINTER_COAT[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_WINTER_COAT_MASK[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_BOOTS[GEAR_BITMAP_BYTES] PROGMEM;
+extern const uint8_t GEAR_BOOTS_MASK[GEAR_BITMAP_BYTES] PROGMEM;

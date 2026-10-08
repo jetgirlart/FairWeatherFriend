@@ -272,7 +272,7 @@ void drawPet(
   }
 
   // Artwork selection is independent of the existing timing/state machine.
-  const uint8_t *sprite = KITSUNE_IDLE;
+  const uint8_t *sprite = currentScreen == FOCUS_SCREEN ? KITSUNE_FOCUS : KITSUNE_IDLE;
   if (currentScreen != FOCUS_SCREEN) {
     switch (getPetState().mood) {
       case PetMood::HAPPY: sprite = KITSUNE_HAPPY; break;
@@ -296,8 +296,8 @@ void drawPet(
   if (eyesClosed) sprite = KITSUNE_BLINK;
   if (sleeping) sprite = KITSUNE_SLEEP;
 
-  // 48x48 presentation inside the old 48x64 anchor preserves the feet baseline
-  // and existing B hop, focus book, heart, and DONE bounce coordinates.
+  // Native 48x48 art renders at 2x; local animation offsets retain their
+  // existing amplitudes, and every gear layer uses this same transformed anchor.
   drawColoredKitsune(sprite, x, y + 16, getBuddySave().furPalette, earOffset, crouching);
   GearId weatherAccessory = GearId::NONE;
   if (expressIdle && idleAction == IdleAction::UMBRELLA) weatherAccessory = GearId::UMBRELLA;
@@ -305,16 +305,10 @@ void drawPet(
   drawEquippedGear(x, y + 16, crouching, sprite == KITSUNE_BOUNCE, weatherAccessory);
 
   if (expressIdle && idleAction == IdleAction::UMBRELLA) {
-    // Chunky canopy beside the pet, entirely below the clock/weather header.
-    int umbrellaY = y + (idleStep == 1 ? 1 : 0);
-    display.fillTriangle(x + 40, umbrellaY + 14, x + 52, umbrellaY + 5,
-                         x + 64, umbrellaY + 14, COLOR_TEXT);
-    display.drawLine(x + 52, umbrellaY + 14, x + 52, umbrellaY + 32, COLOR_TEXT);
-    display.drawLine(x + 52, umbrellaY + 32, x + 48, umbrellaY + 32, COLOR_TEXT);
+    drawWeatherGear(GearId::UMBRELLA, x, y + 16 + (idleStep == 1 ? 1 : 0));
   }
   if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) {
-    display.fillRect(x + 8, y + 44, 24, 3, COLOR_TEXT);
-    display.fillRect(x + 28, y + 47, 3, 7, COLOR_TEXT);
+    drawWeatherGear(GearId::WINTER_SCARF, x, y + 16);
   }
 
 }
