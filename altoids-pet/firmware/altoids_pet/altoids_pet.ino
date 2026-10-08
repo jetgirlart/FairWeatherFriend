@@ -8,12 +8,13 @@
 #include "journal_ui.h"
 
 void setup() {
+  // Keep the TFT dark during the existing Serial/clock/cache startup path.
+  initializeDisplayBus();
   Serial.begin(115200);
   delay(500);
 
   // Restore Central timezone on every boot, including deep-sleep wake.
   configureTimezone();
-  initializeDisplayBus();
   initializeButtons();
   initializeDisplay();
   initializeJournal();

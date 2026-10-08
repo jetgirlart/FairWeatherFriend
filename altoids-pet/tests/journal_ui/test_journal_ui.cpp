@@ -31,8 +31,8 @@ WeatherState mapWeatherCode(int code) {
 #include "../../firmware/altoids_pet/journal_ui.cpp"
 std::vector<TextRow> frameText;
 unsigned frameClears=0,framePushes=0,discoveryDots=0;
-Adafruit_SH1107 fakeDisplay;
-Adafruit_SH1107 &display=fakeDisplay;
+DisplaySurface fakeDisplay;
+DisplaySurface &display=fakeDisplay;
 ScreenMode currentScreen=HOME;
 int menuIndex=2;
 void drawMenu() {display.clearDisplay();display.setTextSize(1);display.setCursor(0,0);display.print("MENU");display.display();}

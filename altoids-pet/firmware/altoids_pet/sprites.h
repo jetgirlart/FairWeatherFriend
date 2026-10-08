@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "palette.h"
 
 // Adafruit_GFX bitmap layout: three MSB-first bytes per row, 24 rows.
 constexpr uint8_t KITSUNE_WIDTH = 24;
@@ -18,7 +19,7 @@ extern const uint8_t KITSUNE_SLEEP[KITSUNE_BITMAP_BYTES] PROGMEM;
 extern const uint8_t KITSUNE_BOUNCE[KITSUNE_BITMAP_BYTES] PROGMEM;
 extern const uint8_t KITSUNE_LOOK_UP[KITSUNE_BITMAP_BYTES] PROGMEM;
 
-// Crisp 2x presentation (48x48). Offsets are in physical OLED pixels.
-// The base artwork stays 24x24. color defaults to white; gear masks use black.
+// Local 2x masks retain existing animation offsets; DisplaySurface maps them
+// to pixel-perfect 3x TFT art. Color is supplied at render time; masks use background.
 void drawKitsuneSprite(const uint8_t *bitmap, int x, int y,
-                       uint8_t earOffset = 0, bool crouching = false, uint16_t color = 1);
+                       uint8_t earOffset = 0, bool crouching = false, uint16_t color = COLOR_FUR);

@@ -23,18 +23,23 @@ const char *gearLabels[] = {
 };
 
 void textAt(int x, int y, const char *text, uint8_t size = 1) {
-  display.setTextSize(size);
-  display.setCursor(x, y);
+  display.setTextSize(size * 2);
+  int width = strlen(text) * 12 * size;
+  int left = x * 2;
+  if (left + width > TFT_WIDTH) left = TFT_WIDTH - width;
+  display.setCursor(left < 0 ? 0 : left, y * 2);
   display.print(text);
 }
 void centered(int y, const char *text, uint8_t size = 1) {
   // Small text for wide values; exact uint64 totals still fit in 120 pixels.
-  if (strlen(text) * 6 * size > 128) size = 1;
-  textAt((128 - int(strlen(text) * 6 * size)) / 2, y, text, size);
+  if (strlen(text) * 12 * size > TFT_WIDTH - 8) size = 1;
+  display.setTextSize(size * 2);
+  display.setCursor((TFT_WIDTH - int(strlen(text) * 12 * size)) / 2, y * 2);
+  display.print(text);
 }
 void beginScreen(const char *title) {
-  display.clearDisplay(); // RAM only; one OLED update at finishScreen().
-  display.setTextColor(SH110X_WHITE);
+  display.clearDisplay(); // RAM only; one TFT update at finishScreen().
+  display.setTextColor(COLOR_TEXT);
   centered(5, title, 2);
 }
 void finishScreen() {
@@ -47,7 +52,7 @@ bool unavailable() {
   if (journalAvailable()) return false;
   centered(46, "JOURNAL UNAVAILABLE");
   centered(65, "SAVE PRESERVED");
-  centered(120, "C:MENU");
+  centered(111, "C:MENU");
   return true;
 }
 void formatDate(int64_t timestamp, char *text, size_t length, bool withTime = false) {
@@ -84,10 +89,10 @@ void drawJournal() {
       unsigned discovered = 0;
       for (uint8_t i = 0; i < WEATHER_CATEGORY_COUNT; ++i) if (data.discoveredWeather & (1UL << i)) ++discovered;
       snprintf(text, sizeof(text), "WEATHER TYPES %u/8", discovered);
-      textAt(4, 83, text);
-      textAt(4, 95, "FIELD RESEARCH BEGAN");
+      textAt(4, 80, text);
+      textAt(4, 89, "FIELD RESEARCH BEGAN");
       formatDate(data.createdAt, text, sizeof(text));
-      textAt(4, 106, text);
+      textAt(4, 99, text);
     } else if (journalPage == 1) {
       textAt(4, 27, "LATEST 2/4");
       if (data.totalObservations == 0) noObservations();
@@ -109,13 +114,13 @@ void drawJournal() {
         uint8_t category = first + row;
         int y = 37 + row * 19;
         textAt(4, y, categoryLabels[category]);
-        if (data.discoveredWeather & (1UL << category)) display.fillCircle(119, y + 3, 2, SH110X_WHITE);
-        else display.drawCircle(119, y + 3, 2, SH110X_WHITE);
+        if (data.discoveredWeather & (1UL << category)) display.fillCircle(224, y * 2 + 6, 3, COLOR_COOL);
+        else display.drawCircle(224, y * 2 + 6, 3, COLOR_MUTED);
         snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.weatherCounts[category]));
-        textAt(4, y + 9, text);
+        centered(y + 9, text);
       }
     }
-    centered(120, "A:NEXT C:MENU");
+    centered(111, "A:NEXT C:MENU");
   }
   finishScreen();
 }
@@ -131,13 +136,13 @@ void drawRecords() {
       centered(40, text, 2);
       formatDate(data.highestTemperatureAt, text, sizeof(text), true);
       centered(59, text);
-      centered(79, "LOWEST");
+      centered(73, "LOWEST");
       formatTemperature(data.lowestTemperatureDeciF, text, sizeof(text));
-      centered(90, text, 2);
+      centered(84, text, 2);
       formatDate(data.lowestTemperatureAt, text, sizeof(text), true);
-      centered(109, text);
+      centered(101, text);
     }
-    centered(120, "C:MENU");
+    centered(111, "C:MENU");
   }
   finishScreen();
 }
@@ -168,8 +173,8 @@ void drawGear() {
                  gearSlotName(static_cast<GearSlot>(i)), gearLabels[static_cast<uint8_t>(data.equippedSlots[i])]);
         textAt(0, 29 + i * 12, row);
       }
-      centered(108, "A:NEXT B:OPEN");
-      centered(120, "C:MENU");
+      centered(99, "A:NEXT B:OPEN");
+      centered(111, "C:MENU");
     } else {
       if (!selectable(selectedGear)) selectedGear = GearId::NONE;
       centered(27, gearSlotName(selectedSlot));
@@ -177,8 +182,8 @@ void drawGear() {
       centered(61, equipmentSaveFailed ? "SAVE FAILED" :
                    selectedGear == data.equippedSlots[static_cast<uint8_t>(selectedSlot)] ? "EQUIPPED" : "UNLOCKED");
       gearRequirement(selectedGear);
-      centered(108, "A:NEXT B:EQUIP");
-      centered(120, "C:SLOTS");
+      centered(99, "A:NEXT B:EQUIP");
+      centered(111, "C:SLOTS");
     }
   }
   finishScreen();

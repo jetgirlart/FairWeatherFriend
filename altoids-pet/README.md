@@ -9,9 +9,9 @@ unlocking cosmetic field gear. Missed weather is intentionally missed.
 
 ## Hardware and wiring
 
-The working hardware is a **Seeed Studio XIAO ESP32-S3**, an **Adafruit SH1107
-128×128 monochrome I2C OLED**, and three momentary buttons. Keep the existing
-power wiring and OLED supply/address configuration.
+The display target is a **Seeed Studio XIAO ESP32-S3** with a **1.54-inch
+240×240 ST7789 SPI TFT**, three momentary buttons, and the existing optional
+passive piezo. The SH1107/I2C display is replaced; power/charging is unchanged.
 
 | Connection | XIAO pin | GPIO | Wiring |
 | --- | --- | --- | --- |
@@ -19,14 +19,24 @@ power wiring and OLED supply/address configuration.
 | Button B / wake | D1 | 2 | Button to GND |
 | Button C | D2 | 3 | Button to GND |
 | Optional passive piezo | D3 | 4 | D3 → 220 Ω → piezo +; piezo − → GND |
-| OLED SDA | D4 | 5 | OLED SDA |
-| OLED SCL | D5 | 6 | OLED SCL |
-| Common ground | GND | — | OLED/buttons/piezo GND |
+| TFT RES/reset | D4 | 5 | RES |
+| Future Hall sensor | D5 | 6 | Reserved, unused |
+| TFT DC | D6 | 43 | DC |
+| TFT CS | D7 | 44 | CS |
+| TFT SCL/clock | D8 | 7 | SCL (SPI SCK) |
+| TFT BLK/backlight | D9 | 8 | BLK, active HIGH control |
+| TFT SDA/data | D10 | 9 | SDA (SPI MOSI) |
+| TFT supply | 3V3 | — | VCC |
+| Common ground | GND | — | TFT/buttons/piezo GND |
 
-Buttons are active LOW with pull-ups. OLED address remains `0x3D`; I2C remains
-400 kHz. See [Seeed's board guide](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)
+The module's SDA/SCL labels mean **SPI**, not I2C. MISO is unused; D9 is
+explicitly the backlight output rather than the board's default SPI MISO.
+Buttons remain active LOW with pull-ups. See [Seeed's board guide](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)
 for pinout and programming recovery. Battery voltage monitoring is not implemented.
 The XIAO hardware handles charging; firmware does not change it.
+
+Display pins/dimensions/rotation/SPI speed live in `firmware/altoids_pet/hardware.h`.
+`TFT_ROTATION` defaults to 0; change only this constant to rotate the panel.
 
 Each button produces one immediate press-down event and stays latched through
 holding and release bounce. It rearms only after HIGH is observed continuously
@@ -40,12 +50,13 @@ Use the working board options and installed library versions. Select
 **XIAO_ESP32S3** in **esp32 by Espressif Systems**. The current full build was
 verified with Arduino-ESP32 **3.3.12**.
 
-Existing libraries:
+Required libraries:
 
-- Adafruit GFX Library and Adafruit SH110X, with their existing dependencies.
+- Adafruit GFX Library and **Adafruit ST7735 and ST7789 Library** (provides
+  `Adafruit_ST7789.h`), with Adafruit BusIO dependencies. SH110X is no longer needed.
 - ArduinoJson (current installed version 7.4.3, `JsonDocument` API).
-- Core-provided Wire, WiFi, WiFiClientSecure, HTTPClient, Preferences, LEDC,
-  time/NTP, and RTC/deep-sleep APIs. No new Arduino libraries are required.
+- Core-provided SPI, WiFi, WiFiClientSecure, HTTPClient, Preferences, LEDC,
+  time/NTP, and RTC/deep-sleep APIs. The ST7789 driver is the only new display dependency.
 
 From `altoids-pet/`, if the private configuration does not already exist:
 
@@ -92,11 +103,15 @@ altoids-pet/
 │   ├── gear.cpp / gear.h
 │   ├── save.cpp / save.h
 │   ├── config.example.h
+│   ├── hardware.h
+│   ├── palette.h
+│   ├── display_surface.cpp/.h
 │   └── config.h                  # local, gitignored
 ├── tests/journal/                # save/observation host checks
 ├── tests/journal_ui/             # screen/control host checks
 ├── tests/gear_overlay/           # bitmap/composition host checks
 ├── tests/buttons/                # press/release debounce host checks
+├── tests/display/                # real GFX + mocked SPI/TFT transport and previews
 ├── hardware/
 ├── enclosure/
 ├── assets/sprites/
@@ -106,7 +121,10 @@ altoids-pet/
 └── .gitignore
 ```
 
-- `display`: existing OLED framebuffer/partial-update driver, UI, and buttons.
+- `display`: 240×240 screen layouts and existing button routing.
+- `display_surface`: RGB565 canvas, changed-tile SPI updates, backlight and TFT sleep.
+- `hardware`: exact TFT wiring, dimensions, rotation, and SPI speed.
+- `palette`: fixed UI colors plus runtime fur/gear colors, independent of saves.
 - `pet`: temporary visual moods, B reaction, sleep schedule, and non-blocking
   idle/weather animation state machines. No permanent care/progression stats.
 - `sprites`: PROGMEM kitsune artwork and bitmap composition.
@@ -367,12 +385,44 @@ power or button policy. No save-reset command is provided.
 
 ## Preserved display, companion, timer, and sound behavior
 
-The flicker-free driver still composes one framebuffer and sends changed OLED
-bytes/pages. Battery status is not added. The home time,
-weather icon/temperature, sunrise/sunset, moon phase, and animations keep their
-existing layout and scheduler. RTC wake setup still guards against an asserted
-B input before blanking the screen and entering deep sleep; only the permanent
-checkpoint hook changed.
+The ST7789 uses hardware SPI: `SPI.begin(D8, -1, D10, D7)`,
+`init(240, 240, SPI_MODE0)`, rotation 0, and a 40 MHz transfer clock. The driver
+handles the controller's 240×240 address offset. Rotation is isolated in
+`hardware.h`. The firmware cannot identify/check panel presence through this
+write-only connection; wiring and orientation require physical verification.
+
+The old SH1107 page-transfer logic is replaced by a **single RGB565 canvas**.
+`clearDisplay()` clears RAM only. `display()` hashes the final 16×16 tiles and
+transfers only tiles that changed since the last completed frame. A clock update
+therefore leaves unchanged pet/environment tiles alone; repeated static frames
+send nothing. Initial boot/wake resynchronizes the full final image. Navigation
+can change most tiles, but never transfers an intermediate blank image. This
+uses 115,200 bytes of canvas heap plus 900 bytes of tile hashes; a second RGB
+framebuffer is avoided. SPI transfers are synchronous, without new animation
+delays. Scheduler cadence and button timing remain unchanged. Actual panel
+tearing/transfer speed and heap headroom during online fetch need hardware tests.
+
+Backlight is driven LOW before panel initialization and enabled only after the
+first restored HOME/FOCUS/DONE frame is transferred. Before deep sleep, the
+existing sleep path calls `sleepDisplay()`: D9 goes LOW and is held LOW through
+deep sleep, then the TFT receives display-off and sleep-in commands. On B wake,
+normal setup releases the hold, initializes the TFT, restores cached state, and
+lights the completed frame. No display path starts Wi-Fi or changes wake sources.
+
+The home layout places a larger clock at the top, environment around the pet,
+a ground baseline, then temperature and weather labels. Menus use 28-pixel row
+spacing. Journal/Records/Gear preserve pages, data and controls with larger text;
+long lifetime totals still fit exactly. Focus shows a large countdown above the
+reading pet. UI coordinates are physical TFT pixels. Only pet/accessory
+composition maps the existing local geometry at 3/2, turning the existing 2×
+masks into **exact 3× art (72×72)** without interpolation or timing changes.
+
+`palette.h` defines a dark background, warm light text, and muted warm/cool
+accents. `petPalette.fur` and `petPalette.gear[GearId]` are runtime RGB565 colors:
+change those values to recolor the same 1-bit masks. They are rendering-only,
+with no new menus, save fields, unlock rules, or duplicated artwork. Gear layer
+order, clothing masks, eye visibility and animated attachment offsets are intact.
+Battery status is not added.
 
 B on awake HOME keeps its 700 ms hop/heart, temporary EXCITED then HAPPY mood,
 and optional sound. It has no lifetime counter or friendship reward. Night-time
@@ -381,7 +431,7 @@ twitch, and weather reactions remain non-blocking at the existing frame cadence.
 
 The original PROGMEM kitsune assets remain in `sprites.cpp`: nine base sprites
 plus LOOK_UP. Each is **24×24, 72 bytes**, three MSB-first bytes per row, white
-bits on a transparent background. They render at crisp 2× scale. To replace an
+bits on a transparent background. They render at crisp 3× scale on the TFT. To replace an
 expression, edit its array initializer while preserving the name/dimensions;
 row comments are illustrative only. Keep ear/neck/feet alignment for existing
 transforms/accessories. Umbrella, scarf, book and hearts remain separate overlays.
@@ -426,8 +476,8 @@ c++ -std=c++17 \
 ```
 
 The screen tests use the same NVS/JSON implementation and a display stub that
-checks every text/circle stays inside 128×128. They cover all Journal pages,
-record/empty displays, all gear choices and locks, equip/unequip, duplicate-write
+checks every text/circle stays inside 240×240. They cover all Journal pages,
+record/empty displays, slot browsing and compatible unlocked choices, equip/unequip, duplicate-write
 avoidance, save failures, NVS restoration, refresh after import, protected storage,
 navigation, unchanged-frame suppression, and one framebuffer update per render:
 
@@ -466,13 +516,53 @@ c++ -std=c++17 \
 /tmp/fwf-buttons-tests
 ```
 
-Source comparisons check that networking/time/cache, power logic, the OLED
-partial-update driver, idle/weather scheduler, base sprite artwork, timer, sound,
-save model, and pin configuration remain unchanged by the screens/gear layer.
-The shared bitmap renderer adds a color argument for local gear masks. The full
-XIAO ESP32-S3 build is also verified. No hardware upload/test was performed here.
+The ST7789 transport tests compile the actual Adafruit GFX canvas/bitmap/text
+implementation with a mocked SPI panel. They check exact pin mapping (including
+no MISO), RAM-only clearing, unchanged-frame suppression, changed-tile updates,
+full resynchronization, pixel-perfect 3× art, runtime colors, and backlight/hold/
+sleep/wake sequencing. Layout tests exercise actual HOME/weather/menu/timer and
+Journal/Records/Gear rendering, all weather states, simultaneous gear, idle poses,
+sleep, and minute-only partial updates. They write PPM previews to `/tmp`.
+
+```sh
+for name in display layout; do
+  c++ -std=c++17 -DARDUINO=100 \
+    -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+    -Ialtoids-pet/tests/display/stubs -Ialtoids-pet/firmware/altoids_pet \
+    -I"$HOME/Documents/Arduino/libraries/Adafruit_GFX_Library" \
+    altoids-pet/tests/display/test_${name}.cpp \
+    "$HOME/Documents/Arduino/libraries/Adafruit_GFX_Library/Adafruit_GFX.cpp" \
+    -o /tmp/fwf-${name}-tests
+  /tmp/fwf-${name}-tests
+done
+```
+
+The display migration leaves save/version/migration/JSON, networking/time/cache,
+weather observations, timer, sound, unlock rules, button debounce and wake-source
+logic unchanged. Only rendering and the display power-off hook change. The full
+XIAO ESP32-S3 build is verified. No upload or hardware test is performed automatically.
 
 On the physical device:
+
+- Wire the exact SPI map above; leave D5 disconnected/reserved. Check rotation,
+  all four edges, colors, and readability. TFT BLK must be controlled by D9.
+- On cold boot and B wake, verify the first illuminated frame is complete, with
+  no white/black flash. Leave idle for 30 seconds: backlight must go fully off,
+  B must wake once, cached weather/time must restore without unnecessary Wi-Fi.
+- Watch several minute changes, blink/double blink, looks, ear twitch, B hops,
+  bounce, night sleep, and every weather animation. Check no trails/black flashes.
+- Equip all six slots. Verify 3× pixel edges, masks, eyes, ear/tail/feet alignment,
+  crouch/shiver/bounce movement, umbrella/scarf replacement and foreground hearts.
+- Browse all menus and Journal pages, Records and Gear slots/items. Check margins,
+  longest labels, lifetime counts, footer readability, one action per A cycle,
+  unchanged B equip/NONE and C back navigation.
+- Run each timer preset through focus/DONE. Check large countdown, book/gear
+  overlap, night sleeping pose, happy completion, sound, and sleep inhibition.
+- Export Buddy before/after upload with erase disabled. Confirm progress, version
+  2, all six equipped slots and JSON confirmation behavior are unchanged.
+- Test an actual online weather/NTP fetch and subsequent cached wakes; check
+  Serial for resets/allocation failures while the larger canvas is allocated.
+
 
 - Open JOURNAL, cycle all four pages, and compare totals, dates, latest weather,
   counts and discovery dots with exported JSON. Confirm B changes nothing and
@@ -503,6 +593,91 @@ On the physical device:
   normal 30-second sleep/B wake, weather/timer controls, sound and home animations.
   When practical, import a valid different buddy while a screen is open and verify
   the displayed values refresh once. Restore your own exported buddy afterward.
+
+1. **Migration/cold boot:** Note the old birthday before updating. Upload with
+   full-flash erase disabled. Check the migration/NVS log and `researchBeganAt`
+   export; friendship/interactions must not become observations. The first live
+   fetch should log one observation and unlock the cap plus applicable gear.
+2. **Cached sleep/wake:** Wait for normal 30-second sleep, wake with B, and verify
+   clock/cache restoration with Wi-Fi off. Export totals before/after: unchanged
+   without a new live fetch. Repeat several wakes; check no black flashes.
+3. **Full power loss:** Note/export the committed journal, remove USB and battery,
+   reconnect, and verify it loads from NVS with the same start/records/gear. A
+   successful cold-boot live fetch may then add one observation normally.
+4. **Live fetch/repeated opening:** Verify a successful live fetch increments
+   totals/category count once. Rapid cold reboot within 60 seconds may still
+   fetch (existing Wi-Fi policy) but must log the guard and award no extra progress.
+   Failed network/fetch/time validation must not award observations.
+5. **Days/records:** Observe on both sides of Central midnight; same-day fetches
+   must not add days. Check dated high/low changes and unchanged tie dates in
+   JSON. A long gap adds only the newly observed day, with no backfill.
+6. **Discovery/gear:** Check first clear/rain/snow and below-freezing observations
+   unlock the documented flags; later eligible live rain/snow observations meet
+   10/5 thresholds. Existing weather accessory animations must remain intact.
+7. **Reflash:** Export, upload the same firmware with unchanged partition and
+   erase settings, then verify the same buddy date/progress is loaded. Account
+   for any new accepted live fetch. Do not erase flash to test routine updates.
+8. **USB transfer:** Export valid JSON. Stage an import and verify no write before
+   confirmation; confirm its checksum and export again. Try malformed JSON,
+   missing fields, bad checksum, newer version, wrong confirmation, cancel, and
+   timeout. The current buddy must remain intact on rejection.
+9. **Regression:** Exercise all A/B/C controls, pet sleep hours, idle/weather
+   reactions, minute changes, sunrise/sunset/moon, all timer controls/countdown/
+   warm-reset resume, and sound. B reactions must never change journal totals.
+
+Record updates, gear thresholds and storage failures can be exercised without
+waiting for weather using the host tests; no test-only weather overrides or
+extra fetch button were added to production firmware.
+
+## Display migration file inventory
+
+Paths below are relative to `altoids-pet/`. This migration changes rendering,
+display power control and their tests; permanent save logic and bitmap arrays
+are unchanged.
+
+```text
+README.md
+firmware/altoids_pet/altoids_pet.ino
+firmware/altoids_pet/config.example.h
+firmware/altoids_pet/config.h             (local, gitignored; hardware include only)
+firmware/altoids_pet/display.cpp
+firmware/altoids_pet/display.h
+firmware/altoids_pet/display_surface.cpp  (new)
+firmware/altoids_pet/display_surface.h    (new)
+firmware/altoids_pet/hardware.h           (new)
+firmware/altoids_pet/palette.h            (new)
+firmware/altoids_pet/gear_overlay.cpp
+firmware/altoids_pet/journal_ui.cpp
+firmware/altoids_pet/pet.cpp
+firmware/altoids_pet/power.cpp
+firmware/altoids_pet/sprites.h
+tests/buttons/test_buttons.cpp
+tests/buttons/stubs/Arduino.h
+tests/buttons/stubs/Adafruit_SH110X.h     (removed)
+tests/buttons/stubs/display_surface.h    (new)
+tests/gear_overlay/test_gear_overlay.cpp
+tests/gear_overlay/stubs/Arduino.h
+tests/gear_overlay/stubs/Adafruit_SH110X.h (removed)
+tests/gear_overlay/stubs/display_surface.h (new)
+tests/journal_ui/test_journal_ui.cpp
+tests/journal_ui/stubs/Adafruit_SH110X.h  (removed)
+tests/journal_ui/stubs/display_surface.h  (new)
+tests/display/test_display.cpp           (new)
+tests/display/test_layout.cpp            (new)
+tests/display/stubs/Arduino.h            (new)
+tests/display/stubs/Print.h              (new)
+tests/display/stubs/SPI.h                (new)
+tests/display/stubs/Adafruit_ST7789.h     (new)
+tests/display/stubs/Adafruit_I2CDevice.h  (new)
+tests/display/stubs/Adafruit_SPIDevice.h  (new)
+tests/display/stubs/driver/gpio.h        (new)
+```
+
+## License
+
+A license has not yet been selected; see `LICENSE`.
+
+Existing progress regression checks:
 
 1. **Migration/cold boot:** Note the old birthday before updating. Upload with
    full-flash erase disabled. Check the migration/NVS log and `researchBeganAt`

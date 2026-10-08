@@ -297,7 +297,7 @@ void drawPet(
 
   // 48x48 presentation inside the old 48x64 anchor preserves the feet baseline
   // and existing B hop, focus book, heart, and DONE bounce coordinates.
-  drawKitsuneSprite(sprite, x, y + 16, earOffset, crouching);
+  drawKitsuneSprite(sprite, x, y + 16, earOffset, crouching, petPalette.fur);
   GearId weatherAccessory = GearId::NONE;
   if (expressIdle && idleAction == IdleAction::UMBRELLA) weatherAccessory = GearId::UMBRELLA;
   if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) weatherAccessory = GearId::WINTER_SCARF;
@@ -307,13 +307,13 @@ void drawPet(
     // Chunky canopy beside the pet, entirely below the clock/weather header.
     int umbrellaY = y + (idleStep == 1 ? 1 : 0);
     display.fillTriangle(x + 40, umbrellaY + 14, x + 52, umbrellaY + 5,
-                         x + 64, umbrellaY + 14, SH110X_WHITE);
-    display.drawLine(x + 52, umbrellaY + 14, x + 52, umbrellaY + 32, SH110X_WHITE);
-    display.drawLine(x + 52, umbrellaY + 32, x + 48, umbrellaY + 32, SH110X_WHITE);
+                         x + 64, umbrellaY + 14, COLOR_TEXT);
+    display.drawLine(x + 52, umbrellaY + 14, x + 52, umbrellaY + 32, COLOR_TEXT);
+    display.drawLine(x + 52, umbrellaY + 32, x + 48, umbrellaY + 32, COLOR_TEXT);
   }
   if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) {
-    display.fillRect(x + 8, y + 44, 24, 3, SH110X_WHITE);
-    display.fillRect(x + 28, y + 47, 3, 7, SH110X_WHITE);
+    display.fillRect(x + 8, y + 44, 24, 3, COLOR_TEXT);
+    display.fillRect(x + 28, y + 47, 3, 7, COLOR_TEXT);
   }
 
 }
@@ -328,14 +328,14 @@ void drawHeart(int x, int y) {
     x + 4,
     y + 4,
     4,
-    SH110X_WHITE
+    COLOR_WARM
   );
 
   display.fillCircle(
     x + 12,
     y + 4,
     4,
-    SH110X_WHITE
+    COLOR_WARM
   );
 
   display.fillTriangle(
@@ -345,7 +345,7 @@ void drawHeart(int x, int y) {
     y + 5,
     x + 8,
     y + 15,
-    SH110X_WHITE
+    COLOR_WARM
   );
 }
 
@@ -458,7 +458,7 @@ void updateAnimations() {
 
   // Redraw one complete framebuffer.
   // clearDisplay() only clears RAM;
-  // the OLED doesn't see the blank buffer.
+  // the TFT doesn't see the blank buffer.
   // display.display() happens once at the end.
 
   drawHome();

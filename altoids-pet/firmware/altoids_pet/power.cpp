@@ -65,7 +65,7 @@ void initializeButtonState(int pin, ButtonState &state) {
 
 void goToSleep() {
   // EXT0 is level-triggered: entering sleep with B already LOW wakes instantly.
-  // Defer before switching off the OLED, even if the button is held/stuck LOW.
+  // Defer before switching off the TFT, even if the button is held/stuck LOW.
   if (digitalRead(BUTTON_B) == LOW) {
     Serial.println("Sleep deferred: B is LOW; release B to allow sleep.");
     lastActivityTime = millis();
@@ -101,7 +101,7 @@ void goToSleep() {
   checkpointJournal(true);
 
   stopSound();
-  display.oled_command(SH110X_DISPLAYOFF);
+  sleepDisplay();
   Serial.println("Press B to wake.");
   delay(100);
   esp_deep_sleep_start();

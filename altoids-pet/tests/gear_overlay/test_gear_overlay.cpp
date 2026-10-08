@@ -7,12 +7,13 @@
 #include "gear_sprites.h"
 
 SerialType Serial;
+PetPalette petPalette;
 unsigned long fakeMillis = 0;
-uint8_t pixels[128*128] = {};
+uint16_t pixels[128*128] = {};
 std::vector<DrawCall> bitmapCalls;
 unsigned pushes=0,clears=0,umbrellas=0,scarves=0;
-Adafruit_SH1107 fakeDisplay;
-Adafruit_SH1107 &display=fakeDisplay;
+DisplaySurface fakeDisplay;
+DisplaySurface &display=fakeDisplay;
 ScreenMode currentScreen=HOME;
 BuddySaveData data;
 bool available=true;
@@ -48,18 +49,18 @@ void rest() {
 void checkTransparentLayer(GearId gear,const uint8_t *art,const uint8_t *mask) {
   setOnlyGear(gear);
   // A background pattern makes unintended transparent-pixel erasure visible.
-  for(unsigned i=0;i<sizeof(pixels);i++)pixels[i]=(i%5)==0;
-  uint8_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
+  for(unsigned i=0;i<128*128;i++)pixels[i]=(i%5)==0;
+  uint16_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
   bitmapCalls.clear();unsigned transfers=pushes;
   drawEquippedGear(40,45,false,false);
   assert(pushes==transfers && bitmapCalls.size()==(mask?2:1));
   int x=gear==GearId::UMBRELLA?80:40,y=gear==GearId::UMBRELLA?35:45;
   for(int Y=0;Y<128;Y++)for(int X=0;X<128;X++) {
-    uint8_t expected=before[Y*128+X];int sx=(X-x)/2,sy=(Y-y)/2;
+    uint16_t expected=before[Y*128+X];int sx=(X-x)/2,sy=(Y-y)/2;
     if(X>=x && X<x+48 && Y>=y && Y<y+48) {
       unsigned index=sy*3+sx/8,bit=0x80>>(sx%8);
-      if(mask && (mask[index]&bit))expected=0;
-      if(art[index]&bit)expected=1;
+      if(mask && (mask[index]&bit))expected=COLOR_BACKGROUND;
+      if(art[index]&bit)expected=petPalette.gear[static_cast<uint8_t>(gear)];
     }
     assert(pixels[Y*128+X]==expected);
   }
@@ -97,7 +98,7 @@ int main() {
     rest();currentScreen=screen;int y=screen==HOME?29:screen==FOCUS_SCREEN?55:40;
     display.clearDisplay();drawPet(40,y,sleeping,false);
     assert(bitmapCalls.size()==12); // Base + five mask/art pairs + glasses.
-    uint8_t rendered[sizeof(pixels)];memcpy(rendered,pixels,sizeof(pixels));
+    uint16_t rendered[sizeof(pixels)];memcpy(rendered,pixels,sizeof(pixels));
     display.clearDisplay();drawKitsuneSprite(sleeping?KITSUNE_SLEEP:screen==TIMER_DONE?KITSUNE_HAPPY:KITSUNE_IDLE,40,y+16);
     for(auto gear:outfit)drawGearItem(gear,40,y+16,false,false);
     assert(memcmp(rendered,pixels,sizeof(pixels))==0);
@@ -112,7 +113,7 @@ int main() {
   // Ear tip and gaze/blink scheduler survive: glasses don't clear eye interiors.
   for(auto sprite:{KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,KITSUNE_LOOK_UP}) {
     display.clearDisplay();drawKitsuneSprite(sprite,40,45);
-    uint8_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
+    uint16_t before[sizeof(pixels)];memcpy(before,pixels,sizeof(pixels));
     setOnlyGear(GearId::SUNGLASSES);drawEquippedGear(40,45,false,false);
     for(int y=9;y<=11;y++)for(int x:{4,5,6,12,13,14})for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)
       assert(pixels[(45+y*2+dy)*128+40+x*2+dx]==before[(45+y*2+dy)*128+40+x*2+dx]);

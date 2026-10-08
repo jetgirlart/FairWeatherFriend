@@ -30,8 +30,8 @@ void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet
   }
   // Hat/glasses stay rigid while the ear tip twitches independently. All layers
   // use the base's exact 2x bitmap expansion and body-crouch row mapping.
-  if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, SH110X_BLACK);
-  drawKitsuneSprite(art, x, y, 0, crouching);
+  if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, COLOR_BACKGROUND);
+  drawKitsuneSprite(art, x, y, 0, crouching, petPalette.gear[static_cast<uint8_t>(equipped)]);
 }
 
 } // namespace

@@ -4,10 +4,11 @@
 SerialType Serial;
 unsigned long fakeMillis=500;
 int pinLevels[4]={HIGH,HIGH,HIGH,HIGH};
-Adafruit_SH1107 fakeDisplay;
-Adafruit_SH1107 &display=fakeDisplay;
+DisplaySurface fakeDisplay;
+DisplaySurface &display=fakeDisplay;
 void checkpointJournal(bool) {}
 void stopSound() {}
+void sleepDisplay() {}
 bool timerActive() {return false;}
 #include "../../firmware/altoids_pet/power.cpp"
 

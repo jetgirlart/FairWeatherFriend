@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SH110X.h>
+#include <display_surface.h>
 
 enum ScreenMode {
   HOME,
@@ -16,7 +16,6 @@ enum ScreenMode {
   GEAR_SCREEN
 };
 
-extern Adafruit_SH1107 &display;
 extern ScreenMode currentScreen;
 extern const char* menuItems[];
 extern const int menuCount;

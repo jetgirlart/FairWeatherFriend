@@ -10,3 +10,11 @@ extern int pinLevels[4];
 inline int digitalRead(int pin) {return pinLevels[pin];}
 inline void pinMode(int,int) {}
 inline void delay(unsigned long) {}
+
+#define D4 5
+#define D5 6
+#define D6 43
+#define D7 44
+#define D8 7
+#define D9 8
+#define D10 9
