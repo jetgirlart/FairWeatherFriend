@@ -31,3 +31,9 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed);
 void drawTimerSetup(uint32_t minutes);
 void drawFocusTimer(uint32_t seconds);
 void drawTimerDone(uint32_t frame);
+
+// Future menu destinations; existing WEATHER/TIMER slots and buttons stay put.
+enum class BuddyMenuPage : uint8_t { JOURNAL, RECORDS, GEAR, TIMER, SETTINGS };
+enum class BuddySetting : uint8_t {
+  EXPORT_BUDDY, IMPORT_BUDDY, LOCATION, UNITS, SOUND, DISPLAY_OPTIONS, ABOUT
+};

@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display.h"
 #include "pet.h"
+#include "journal.h"
 #include "timer.h"
 #include "sound.h"
 #include <esp_sleep.h>
@@ -101,7 +102,7 @@ void goToSleep() {
   }
 
   Serial.println("Going to sleep... B wake input HIGH.");
-  checkpointPetState(true);
+  checkpointJournal(true);
 
   stopSound();
   display.oled_command(SH110X_DISPLAYOFF);

@@ -4,6 +4,7 @@
 #include "power.h"
 #include "timer.h"
 #include "sound.h"
+#include "journal.h"
 
 void setup() {
   Serial.begin(115200);
@@ -14,6 +15,7 @@ void setup() {
   initializeDisplayBus();
   initializeButtons();
   initializeDisplay();
+  initializeJournal();
   initializeWeather(wokeFromButton());
   initializePetState();
 
@@ -35,5 +37,6 @@ void loop() {
   updateAnimations();
   updateTimer();
   updateSound();
+  updateJournal();
   sleepIfIdle();
 }

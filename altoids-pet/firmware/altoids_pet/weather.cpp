@@ -1,4 +1,5 @@
 #include "weather.h"
+#include "journal.h"
 #include "display.h"
 #include "config.h"
 #include <WiFi.h>
@@ -572,6 +573,20 @@ bool fetchWeather() {
       sunsetHour,
       sunsetMinute
     );
+  }
+
+  // Only this successful LIVE fetch can create journal progress. RTC restore
+  // and failed fetches never call it. Keep existing fetch/cache/UI semantics.
+  if (timeValid && doc["current"]["temperature_2m"].is<float>() &&
+      doc["current"]["weather_code"].is<int32_t>() &&
+      isfinite(temperature) && temperature >= -200 && temperature <= 200) {
+    WeatherObservation observation = {
+      static_cast<int64_t>(time(nullptr)), static_cast<int32_t>(lround(temperature * 10)),
+      weatherCode, observationCategoryForCode(weatherCode)
+    };
+    recordWeatherObservation(observation);
+  } else {
+    Serial.println("Live weather displayed; journal observation skipped (invalid clock/measurement).");
   }
 
   return true;

@@ -83,7 +83,7 @@ ScreenMode currentScreen = HOME;
 const char* menuItems[] = {
   "WEATHER",
   "TIMER",
-  "PET",
+  "JOURNAL",
   "SETTINGS"
 };
 

@@ -20,7 +20,7 @@ void updateAnimations();
 void initializeAnimations();
 void updatePetReaction();
 
-// No negative moods or decay. SLEEPY follows the existing pet sleep schedule.
+// Temporary visual moods only; SLEEPY follows the existing sleep schedule.
 enum class PetMood : uint8_t {
   HAPPY,
   CALM,
@@ -31,13 +31,8 @@ enum class PetMood : uint8_t {
 
 struct PetState {
   PetMood mood;
-  uint8_t friendship;
-  uint64_t interactions;
-  int64_t createdAt; // Unix seconds; 0 until the existing clock becomes valid.
 };
 
 void initializePetState();
 const PetState &getPetState();
 bool interactWithPet();
-// beforeSleep commits dirty progress even inside the periodic cooldown.
-void checkpointPetState(bool beforeSleep = false);
