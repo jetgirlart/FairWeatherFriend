@@ -80,11 +80,13 @@ altoids-pet/
 │   ├── timer.cpp / timer.h
 │   ├── sound.cpp / sound.h
 │   ├── journal.cpp / journal.h
+│   ├── journal_ui.cpp / journal_ui.h
 │   ├── gear.cpp / gear.h
 │   ├── save.cpp / save.h
 │   ├── config.example.h
 │   └── config.h                  # local, gitignored
-├── tests/journal/                # host checks, not Arduino firmware
+├── tests/journal/                # save/observation host checks
+├── tests/journal_ui/             # screen/control host checks
 ├── hardware/
 ├── enclosure/
 ├── assets/sprites/
@@ -104,6 +106,7 @@ altoids-pet/
 - `timer`: presets/countdown/DONE and independent RTC timer recovery.
 - `sound`: optional brief piezo cues; no added blocking delays.
 - `journal`: observation rules, runtime journal view, checkpoints, and USB commands.
+- `journal_ui`: Journal/Records/Gear screens, paging, and equipment selection.
 - `gear`: stable cosmetic IDs, a central unlock-rules table, and equipment hook.
 - `save`: versioned byte encoding, NVS slots, old-birthday migration, JSON validation.
 
@@ -204,14 +207,46 @@ not the committed journal.
 Gear is cosmetic, with no bonuses or care requirements. Unlock flags use bit
 `ID - 1`; discovery flags use bits 0–7 in the category order above. Equipment
 starts at NONE. `equipGear()` rejects locked/invalid items and checkpoints a
-changed selection. **The GEAR screen and wearing selected equipment are future
-UI work.** Existing weather umbrella/scarf reactions continue independently.
+changed selection. The GEAR screen lets you browse/select equipment. **Drawing
+the selected equipment on the home pet remains future artwork/rendering work.**
+Existing weather umbrella/scarf reactions continue independently.
 
-The current menu remains WEATHER, TIMER, **JOURNAL** (formerly PET), SETTINGS.
-JOURNAL/SETTINGS retain their selection-log placeholders. Stable future page
-IDs cover JOURNAL, RECORDS, GEAR, TIMER, SETTINGS; settings action IDs cover
-EXPORT BUDDY, IMPORT BUDDY, LOCATION, UNITS, SOUND, DISPLAY, ABOUT. No full menu
-redesign or new button mapping is introduced.
+The menu is WEATHER, TIMER, JOURNAL, RECORDS, GEAR, SETTINGS. WEATHER and TIMER
+retain their first two positions and existing controls. The six entries fit
+on one screen. SETTINGS remains a selection-log placeholder; future action IDs
+cover EXPORT BUDDY, IMPORT BUDDY, LOCATION, UNITS, SOUND, DISPLAY, ABOUT.
+
+## Journal, Records, and Gear screens
+
+From HOME, A opens the menu, A advances its selection, and B opens the selected
+screen. C from these three screens returns to the menu at the same selection;
+C from the menu retains its existing return-home behavior.
+
+- **JOURNAL:** A cycles four pages: total observations/days/discovered types and
+  FIELD RESEARCH BEGAN date; latest observation's Central date/time, temperature,
+  category and weather code; clear/mainly-clear/partly-cloudy/cloudy counts; and
+  rain/storm/snow/fog counts. Filled dots mark discovered categories; hollow dots
+  mark undiscovered ones. B has no action.
+- **RECORDS:** Shows highest/lowest temperatures to a tenth Fahrenheit with their
+  Central dates/times. A and B have no action. With no observations, it shows an
+  explicit waiting message rather than zero-temperature records.
+- **GEAR:** Opens at the equipped item. A cycles NONE and the seven gear IDs,
+  including locked items. Each displays EQUIPPED, UNLOCKED, or LOCKED, plus its
+  requirement. B equips an unlocked choice; NONE removes equipment. Locked
+  choices cannot be equipped. SAVE FAILED leaves the previous equipment intact.
+  Selecting an already-equipped item does not write NVS again.
+
+Viewing pages does not award observations, fetch weather, write progress, or
+play new sounds. Equipment selection uses the existing verified NVS hook and
+survives reboot/power loss. Protected/unavailable storage displays JOURNAL
+UNAVAILABLE / SAVE PRESERVED and disables equipment changes. Unknown creation
+time displays WAITING FOR TIME.
+
+Each render composes the existing framebuffer and calls `display()` once. The
+partial-update driver is unchanged. Static screens are not animated or redrawn
+continuously; a 250 ms check refreshes them only if the saved-data checksum or
+availability changes, such as after USB import. Normal inactivity sleep and B
+wake still apply to these screens. Wake returns to the existing home/timer flow.
 
 ## USB Export Buddy / Import Buddy foundation
 
@@ -256,7 +291,7 @@ power or button policy. No save-reset command is provided.
 ## Preserved display, companion, timer, and sound behavior
 
 The flicker-free driver still composes one framebuffer and sends changed OLED
-bytes/pages. Battery status and new journal screens are not added. The time,
+bytes/pages. Battery status is not added. The home time,
 weather icon/temperature, sunrise/sunset, moon phase, and animations keep their
 existing layout and scheduler. RTC wake setup still guards against an asserted
 B input before blanking the screen and entering deep sleep; only the permanent
@@ -313,12 +348,42 @@ c++ -std=c++17 \
 /tmp/fwf-journal-tests
 ```
 
-Source comparisons check that networking/time/cache, power logic, display
-rendering, idle/weather scheduler, sprites, timer, sound, and pin configuration
-remain unchanged apart from the narrow journal hooks and menu label. The full
+The screen tests use the same NVS/JSON implementation and a display stub that
+checks every text/circle stays inside 128×128. They cover all Journal pages,
+record/empty displays, all gear choices and locks, equip/unequip, duplicate-write
+avoidance, save failures, NVS restoration, refresh after import, protected storage,
+navigation, unchanged-frame suppression, and one framebuffer update per render:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/journal_ui/stubs -Ialtoids-pet/tests/journal/stubs \
+  -Ialtoids-pet/firmware/altoids_pet \
+  -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+  altoids-pet/tests/journal_ui/test_journal_ui.cpp -o /tmp/fwf-journal-ui-tests
+/tmp/fwf-journal-ui-tests
+```
+
+Source comparisons check that networking/time/cache, power logic, the OLED
+partial-update driver, idle/weather scheduler, sprites, timer, sound, save model,
+and pin configuration remain unchanged by the new screens. The full
 XIAO ESP32-S3 build is also verified. No hardware upload/test was performed here.
 
 On the physical device:
+
+- Open JOURNAL, cycle all four pages, and compare totals, dates, latest weather,
+  counts and discovery dots with exported JSON. Confirm B changes nothing and
+  C returns to the same menu entry.
+- Open RECORDS and check positive/negative temperatures and dates against JSON.
+  Check empty-journal messages using the host tests or a deliberately confirmed
+  test import after exporting your real buddy.
+- Browse all eight GEAR choices. Verify locked-item rejection, equip an unlocked
+  item, select NONE to remove it, and reopen the screen to check EQUIPPED status.
+  Reboot/reflash with normal NVS preservation and verify the selection persists.
+- Leave each screen idle: no repeated refresh or flash should occur. Check
+  normal 30-second sleep/B wake, weather/timer controls, sound and home animations.
+  When practical, import a valid different buddy while a screen is open and verify
+  the displayed values refresh once. Restore your own exported buddy afterward.
 
 1. **Migration/cold boot:** Note the old birthday before updating. Upload with
    full-flash erase disabled. Check the migration/NVS log and `researchBeganAt`

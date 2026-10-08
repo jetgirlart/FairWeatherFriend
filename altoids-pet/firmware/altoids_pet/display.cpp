@@ -1,4 +1,5 @@
 #include "display.h"
+#include "journal_ui.h"
 #include "pet.h"
 #include "weather.h"
 #include "timer.h"
@@ -84,10 +85,12 @@ const char* menuItems[] = {
   "WEATHER",
   "TIMER",
   "JOURNAL",
+  "RECORDS",
+  "GEAR",
   "SETTINGS"
 };
 
-const int menuCount = 4;
+const int menuCount = sizeof(menuItems) / sizeof(menuItems[0]);
 int menuIndex = 0;
 
 // ==================================================
@@ -1136,8 +1139,8 @@ void drawMenu() {
   ) {
 
     int y =
-      40 +
-      i * 18;
+      32 +
+      i * 14;
 
     if (
       i == menuIndex
@@ -1204,6 +1207,7 @@ void initializeDisplay() {
 
 void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
   if (handleTimerButtons(aPressed, bPressed, cPressed)) return;
+  if (handleJournalButtons(aPressed, bPressed, cPressed)) return;
   // ----------------------------------------------
   // A BUTTON
   // ----------------------------------------------
@@ -1281,6 +1285,12 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
 
       } else if (menuIndex == 1) {
         openTimerSetup();
+      } else if (menuIndex == 2) {
+        openJournalScreen(JOURNAL_SCREEN);
+      } else if (menuIndex == 3) {
+        openJournalScreen(RECORDS_SCREEN);
+      } else if (menuIndex == 4) {
+        openJournalScreen(GEAR_SCREEN);
       } else {
 
         Serial.print(
@@ -1306,7 +1316,7 @@ void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
 
     if (
       currentScreen ==
-      WEATHER_SCREEN
+      WEATHER_SCREEN || isJournalScreen()
     ) {
 
       currentScreen =

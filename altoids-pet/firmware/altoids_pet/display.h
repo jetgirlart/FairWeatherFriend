@@ -10,7 +10,10 @@ enum ScreenMode {
   WEATHER_SCREEN,
   TIMER_SETUP,
   FOCUS_SCREEN,
-  TIMER_DONE
+  TIMER_DONE,
+  JOURNAL_SCREEN,
+  RECORDS_SCREEN,
+  GEAR_SCREEN
 };
 
 extern Adafruit_SH1107 &display;

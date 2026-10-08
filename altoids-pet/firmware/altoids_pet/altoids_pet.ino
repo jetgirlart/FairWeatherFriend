@@ -5,6 +5,7 @@
 #include "timer.h"
 #include "sound.h"
 #include "journal.h"
+#include "journal_ui.h"
 
 void setup() {
   Serial.begin(115200);
@@ -38,5 +39,6 @@ void loop() {
   updateTimer();
   updateSound();
   updateJournal();
+  updateJournalScreens();
   sleepIfIdle();
 }
