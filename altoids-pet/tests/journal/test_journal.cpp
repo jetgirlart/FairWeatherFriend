@@ -55,6 +55,13 @@ std::vector<uint8_t> oldRecord(const BuddySaveData &s, GearId gear, uint64_t gen
 int main() {
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  blank(); checkpointJournal();assert(nvsWrites==1 && getBuddySave().createdAt==fakeEpoch);
+ assert(buddyNeedsSetup()); initializeJournal(); assert(buddyNeedsSetup());
+ unsigned setupWrites=nvsWrites;failWrite=true;assert(!confirmBuddySetup(FurPaletteId::BLUE));
+ assert(buddyNeedsSetup() && getBuddySave().furPalette==FurPaletteId::ORANGE && nvsWrites==setupWrites);
+ failWrite=false;assert(!confirmBuddySetup(static_cast<FurPaletteId>(5)));
+ assert(confirmBuddySetup(FurPaletteId::BLUE) && nvsWrites==setupWrites+1);
+ initializeJournal();assert(!buddyNeedsSetup() && getBuddySave().furPalette==FurPaletteId::BLUE);
+ setupWrites=nvsWrites;assert(!confirmBuddySetup(FurPaletteId::CREAM) && nvsWrites==setupWrites);
  int64_t birth=getBuddySave().createdAt;
  observe();assert(getBuddySave().totalObservations==1 && getBuddySave().uniqueDaysObserved==1);
  assert(getBuddySave().unlockedGear==(gearFlag(GearId::FIELD_CAP)|gearFlag(GearId::SUNGLASSES)));
@@ -94,7 +101,7 @@ int main() {
  // JSON corruption, missing/type-invalid fields, inconsistent counters and unsupported versions.
  JsonDocument doc;assert(!deserializeJson(doc,json));doc["totalObservations"]=999;
  std::string bad;serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
- assert(!deserializeJson(doc,json));doc["saveVersion"]=3;bad.clear();serializeJson(doc,bad);
+ assert(!deserializeJson(doc,json));doc["saveVersion"]=4;bad.clear();serializeJson(doc,bad);
  assert(!importBuddy(bad.c_str(),bad.size()));assert(buddySaveChecksum(saved)==buddySaveChecksum(getBuddySave()));
  assert(!deserializeJson(doc,json));doc.remove("researchBeganAt");bad.clear();serializeJson(doc,bad);
  assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
@@ -125,8 +132,8 @@ int main() {
    GearId gear=static_cast<GearId>(id);auto record=oldRecord(saved,gear,9);
    storage.clear();storage["fwf-buddy"]["save1"]=record;
    initializeJournal();assert(journalAvailable() && dirty && generation==9);
-   auto migrated=getBuddySave();assert(migrated.saveVersion==2);
-   auto expected=saved;for(auto &item:expected.equippedSlots)item=GearId::NONE;
+   auto migrated=getBuddySave();assert(migrated.saveVersion==3);
+   auto expected=saved;expected.setupComplete=true;expected.furPalette=FurPaletteId::ORANGE;for(auto &item:expected.equippedSlots)item=GearId::NONE;
    if(id)expected.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
    assert(buddySaveChecksum(migrated)==buddySaveChecksum(expected));
    failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==record);
@@ -155,6 +162,41 @@ int main() {
    if(scenario==3)doc["equippedSlots"]["EXTRA"]=0;
    bad.clear();serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
  }
+ // Frozen v2 records migrate all six slots, palette ORANGE, setup complete.
+ auto original=getBuddySave();auto beforeV2=storage;
+ std::vector<uint8_t> v2(192);uint8_t *vp=v2.data();
+ put32(vp,SAVE_MAGIC);put32(vp,2);put32(vp,168);put64(vp,31);vp+=4;
+ auto common=oldPayload(original,GearId::NONE);memcpy(v2.data()+24,common.data(),144);
+ vp=v2.data()+24;put32(vp,2);vp=v2.data()+24+144;
+ for(auto item:original.equippedSlots)put32(vp,static_cast<uint8_t>(item));
+ vp=v2.data()+20;put32(vp,hashBytes(v2.data()+24,168,hashBytes(v2.data(),20)));
+ storage.clear();storage["fwf-buddy"]["save1"]=v2;initializeJournal();
+ auto v2Expected=original;v2Expected.furPalette=FurPaletteId::ORANGE;v2Expected.setupComplete=true;
+ assert(!buddyNeedsSetup() && dirty && buddySaveChecksum(getBuddySave())==buddySaveChecksum(v2Expected));
+ failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==v2);
+ failWrite=false;checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
+ // V2 JSON verifies its original checksum before upgrading/defaulting palette.
+ assert(!deserializeJson(doc,json));doc["saveVersion"]=2;doc.remove("furPalette");doc.remove("setupComplete");
+ char v2Hash[9];snprintf(v2Hash,9,"%08lx",(unsigned long)hashBytes(v2.data()+24,168));doc["checksum"]=v2Hash;
+ bad.clear();serializeJson(doc,bad);assert(deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
+ assert(buddySaveChecksum(restored)==buddySaveChecksum(v2Expected));
+ storage=beforeV2;initializeJournal();
+ for(int scenario=0;scenario<4;++scenario){
+   assert(!deserializeJson(doc,json));
+   if(scenario==0)doc["furPalette"]=5;
+   if(scenario==1)doc["furPalette"]="BLUE";
+   if(scenario==2)doc.remove("furPalette");
+   if(scenario==3)doc["setupComplete"]=1;
+   bad.clear();serializeJson(doc,bad);assert(!deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
+ }
+ // All palettes roundtrip and preserve all existing buddy fields.
+ for(uint8_t id=0;id<5;++id){
+   auto colored=saved;colored.furPalette=static_cast<FurPaletteId>(id);Print output;
+   assert(serializeBuddySave(colored,output));assert(deserializeBuddySave(output.output.c_str(),output.output.size(),restored,error));
+   assert(buddySaveChecksum(colored)==buddySaveChecksum(restored));
+   assert(persistBuddySave(colored));initializeJournal();
+   assert(!buddyNeedsSetup() && buddySaveChecksum(getBuddySave())==buddySaveChecksum(colored));
+ }
  // Failed writes leave earlier checkpoint valid; rate-limited retry and sleep checkpoint.
  failWrite=true;observe(45,500);auto pending=getBuddySave();writes=nvsWrites;
  for(int i=0;i<10;i++) {fakeMillis+=1000;updateJournal();}assert(nvsWrites==writes);
@@ -168,7 +210,7 @@ int main() {
  const char *latestKey=generation%2?"save1":"save0";storage["fwf-buddy"][latestKey].back()^=1;
  initializeJournal();assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(previous));
  // Unknown version on either slot locks all writes, including import/equipment.
- storage["fwf-buddy"][latestKey][4]=3;auto protectedStorage=storage;
+ storage["fwf-buddy"][latestKey][4]=4;auto protectedStorage=storage;
  initializeJournal();assert(!journalAvailable());
  assert(!recordWeatherObservation({fakeEpoch+3600,700,0,WeatherCategory::CLEAR}));
  assert(!importBuddy(json.c_str(),json.size()));checkpointJournal(true);assert(storage==protectedStorage);
@@ -189,6 +231,17 @@ int main() {
  initializeJournal();assert(getBuddySave().createdAt==1791000000);
  blank();timeValid=false;initializeJournal();checkpointJournal();assert(getBuddySave().createdAt==0);
  timeValid=true;fakeEpoch+=100;checkpointJournal();birth=getBuddySave().createdAt;initializeJournal();assert(getBuddySave().createdAt==birth);
+ // Setup confirmation retains observations made by the unchanged startup fetch.
+ blank();observe(71,300);auto beforeSetup=getBuddySave();assert(buddyNeedsSetup());
+ beforeSetup.furPalette=FurPaletteId::CREAM;beforeSetup.setupComplete=true;
+ assert(confirmBuddySetup(FurPaletteId::CREAM));initializeJournal();
+ assert(!buddyNeedsSetup() && buddySaveChecksum(getBuddySave())==buddySaveChecksum(beforeSetup));
+ // Corrupt known records are protected, never classified as a genuinely new buddy.
+ blank();checkpointJournal();auto intact=storage;
+ storage["fwf-buddy"]["save1"].back()^=1;auto corrupt=storage;
+ initializeJournal();assert(!journalAvailable() && !buddyNeedsSetup() && storage==corrupt);
+ blank();storage.clear();storage["altoids-pet"]["birthday"]=std::vector<uint8_t>(3,0);
+ initializeJournal();assert(!journalAvailable() && !buddyNeedsSetup());
  // Unknown legacy version is preserved, not interpreted as a new buddy.
  blank();storage.clear();old.record.version=2;
  storage["altoids-pet"]["state"]=std::vector<uint8_t>((uint8_t*)&old.record,(uint8_t*)&old.record+sizeof(old.record));

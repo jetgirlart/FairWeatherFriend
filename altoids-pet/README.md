@@ -2,7 +2,8 @@
 
 FairWeather Friend is a pocket-sized virtual field-research buddy that logs
 weather observations when you open it. The friendly kitsune is a self-sufficient
-little meteorologist: it needs no feeding, cleaning, care, or friendship grinding.
+little meteorologist is fully grown from the beginning and never evolves. It
+needs no feeding, cleaning, care, or friendship grinding.
 There is no hunger, health, neglect, punishment, or death. Progress comes from
 observing weather, setting lifetime records, discovering weather types, and
 unlocking cosmetic field gear. Missed weather is intentionally missed.
@@ -124,7 +125,8 @@ altoids-pet/
 - `display`: 240×240 screen layouts and existing button routing.
 - `display_surface`: RGB565 canvas, changed-tile SPI updates, backlight and TFT sleep.
 - `hardware`: exact TFT wiring, dimensions, rotation, and SPI speed.
-- `palette`: fixed UI colors plus runtime fur/gear colors, independent of saves.
+- `palette`: five stable fur palette IDs, pixel-role RGB565 tables, and gear tints.
+- `buddy_setup`: first-run welcome/preview/confirmation, without new care mechanics.
 - `pet`: temporary visual moods, B reaction, sleep schedule, and non-blocking
   idle/weather animation state machines. No permanent care/progression stats.
 - `sprites`: PROGMEM kitsune artwork and bitmap composition.
@@ -175,47 +177,84 @@ be recorded.
 If NTP/measurement validation fails, that fetch is not backdated later. The
 existing fetch can still display weather; the journal logs why it skipped progress.
 
+## First-run Buddy Setup and fur colors
+
+A genuinely new buddy enters WELCOME before the normal home/timer UI. Existing
+v1/v2 buddies and legacy birthday migrations skip it. A pending v3 setup resumes
+at WELCOME after ordinary sleep/wake or reboot; confirmation is the permanent
+checkpoint. The existing Wi-Fi/NTP/weather startup still runs normally, and any
+accepted startup observation is retained when the color is confirmed.
+
+- WELCOME: B begins fur selection.
+- FUR COLOR: A cycles ORANGE → CREAM → GRAY → BROWN → BLUE → ORANGE.
+  The actual shared kitsune renderer previews the highlighted color. C returns
+  to WELCOME without writing; B confirms.
+- Confirmation immediately writes and verifies the selected ID and
+  `setupComplete=true` in NVS. SAVE FAILED stays on selection for B retry.
+  Success shows “Ready for field work!” for 1.6 seconds using `millis()`, then
+  restores the normal home/timer flow. Confirmed setup cannot be reopened by C.
+
+| Stable palette ID | Color |
+| --- | --- |
+| 0 | ORANGE (original default) |
+| 1 | CREAM |
+| 2 | GRAY |
+| 3 | BROWN |
+| 4 | BLUE |
+
+Selection does not write on A/C, add observations, or change progress. The normal
+30-second inactivity sleep and B wake still apply. Unconfirmed highlighted
+choices are temporary; after reboot preview starts from the pending saved ID.
+There is no fur-settings menu, evolution, naming, gender, XP, or care system.
+
 ## Permanent saves and RTC cache
 
-`BuddySaveData` in `save.h` is **saveVersion 2**. It contains the research start
+`BuddySaveData` in `save.h` is **saveVersion 3**. It contains the research start
 (`createdAt`, exported as `researchBeganAt`), observation/day totals, latest
 observation, dated high/low records, eight category counters, discovery flags,
-unlocked gear flags, and six equipped slot IDs. A zero start timestamp means the
+unlocked gear flags, six equipped slot IDs, a stable `furPalette` ID and
+`setupComplete` flag. A zero start timestamp means the
 existing clock has not become valid yet. It is captured once and never reset
 by observations, sleep, reboot, or firmware upload. A confirmed Import Buddy is
 an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 168-byte little-endian payload. Native structs, padding, mood,
+and an explicit 176-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
 
-Version 1 buddy records (148-byte payloads) are verified and migrated explicitly:
-all progress/unlock fields remain intact, the old equipped item goes into its
-matching slot, and other slots start at NONE. The newest valid generation wins
-across v1/v2 records. Migration queues a normal checkpoint, which writes v2 to
-the alternate NVS key and retains the old record as a fallback. Failed writes
-leave migration pending. Unknown/newer versions on either key block all writes.
+Version 2 buddy records (168-byte payloads) are verified and explicitly migrated
+to version 3. Every observation, record, timestamp, discovery, unlock and equipped
+slot remains intact. Existing buddies receive ORANGE and `setupComplete=true`,
+so migration never opens first-run setup. Version 1 records (148-byte payloads)
+also retain the single-item-to-slot migration and receive the same defaults.
+The newest valid generation wins across v1/v2/v3 records. Migration queues a
+normal checkpoint to the alternate NVS key, retaining the earlier record as a
+fallback. Failed writes leave migration pending. Unknown/newer versions on
+either key block all writes.
 
 The old `altoids-pet` namespace remains untouched. Migration reads the supported
 old `state0`/`state1` or original `state` record and copies **only the birthday**;
 the separate old `birthday` key is authoritative. Friendship, B interaction
-counts, and cooldowns are ignored. Migration and the next observation can share
+counts, and cooldowns are ignored. These existing buddies also receive ORANGE
+and skip setup. Migration and the next observation can share
 one checkpoint. No old weather observations are invented from interactions.
 
 Unknown versions, unrecognized/truncated layouts, and unreadable storage disable
 progress writes/imports and produce clear Serial errors. Existing data is
 preserved. An invalid checksum can use another valid supported slot. If neither
-slot is valid, the loader logs that and tries the supported legacy birthday or
-initializes a new journal; there is no silent full-flash reset. Future versions
+slot is valid but buddy keys exist, the loader protects the damaged save rather
+than initializing a new buddy. A genuinely new buddy requires absent buddy keys
+and no legacy buddy. Unsupported/damaged legacy data is also protected. Future versions
 extend the decoder/migration dispatch in `save.cpp`, rather than reinterpreting
 old payloads. New event categories, wind/humidity/pressure records, alerts, moon
 collections, and more gear can be added with explicit version migrations.
 
 NVS writes occur only for new/migrated save initialization, first valid creation
-time, accepted live observations, changed equipment, and confirmed import.
+time, accepted live observations, changed equipment, successful first-run
+confirmation, and confirmed import.
 Unchanged loops, cached wakes, animations, and B reactions do not write flash.
 Normal pre-sleep checkpointing writes only pending changes. A failed save retains
 the previous NVS checkpoint, retries at most once per minute while awake, and
@@ -339,17 +378,22 @@ written as eight hexadecimal characters. It detects accidental corruption; it
 is not an authentication mechanism. JSON uses tenths Fahrenheit regardless of
 future display units and contains no Wi-Fi credentials or weather cache.
 
-Version 2 JSON replaces `equippedGear` with all six numeric slot IDs:
+Version 3 JSON contains all six numeric equipment IDs plus the selected fur ID
+and setup state:
 
 ```json
-"equippedSlots": {"HEAD": 1, "FACE": 2, "NECK": 5, "BODY": 4, "FEET": 7, "PROP": 3}
+"equippedSlots": {"HEAD": 1, "FACE": 2, "NECK": 5, "BODY": 4, "FEET": 7, "PROP": 3},
+"furPalette": 0,
+"setupComplete": true
 ```
 
-IDs remain unchanged; 0 means NONE. Import requires all six slots, compatible
-unlocked items, and a matching checksum. Version 1 JSON backups are also accepted:
-their original v1 checksum is verified before migrating the item and upgrading
-to v2. Use the confirmation checksum printed by staging, which describes the
-migrated v2 buddy. Newer/unknown versions are rejected without writes.
+Gear IDs remain unchanged; 0 means NONE. Import requires all slots, compatible
+unlocked items, integer fur IDs 0–4, a boolean setup flag, and a matching checksum.
+Strings, missing palette fields, invalid IDs and newer versions are rejected
+without writes. Version 1/2 backups remain supported: their original byte-format
+checksums are verified before upgrading to v3 with ORANGE and setup complete.
+Use the confirmation checksum printed by staging, which describes the upgraded
+buddy. Current-version backups also preserve an unfinished setup's false flag.
 
 ```text
 EXPORT_BUDDY
@@ -417,11 +461,20 @@ reading pet. UI coordinates are physical TFT pixels. Only pet/accessory
 composition maps the existing local geometry at 3/2, turning the existing 2×
 masks into **exact 3× art (72×72)** without interpolation or timing changes.
 
-`palette.h` defines a dark background, warm light text, and muted warm/cool
-accents. `petPalette.fur` and `petPalette.gear[GearId]` are runtime RGB565 colors:
-change those values to recolor the same 1-bit masks. They are rendering-only,
-with no new menus, save fields, unlock rules, or duplicated artwork. Gear layer
-order, clothing masks, eye visibility and animated attachment offsets are intact.
+`palette.h/.cpp` define the five palettes as RGB565 **outline, primary fur,
+light/accent fur and facial/detail colors**. Transparent pixels draw nothing.
+`buildKitsuneRoles()` in `sprites.cpp` derives the same role map for every 1-bit
+expression: exterior pixels remain transparent, enclosed regions become fur,
+and shared face/ear/muzzle/tail hints assign details and accents. No full sprite
+sets are duplicated per color. `drawRoleSprite()` is a general 24×24 role-map
+renderer reusable for future gear variants; the current gear masks/tints remain
+unchanged. `drawColoredKitsune()` shares the existing scaling/ear/crouch mapping.
+
+Normal pet rendering reads the saved `furPalette` each frame, so HOME, focus,
+DONE, sleeping poses, expressions and confirmed imports use the same selection.
+Gear layer order, clothing masks, eye visibility and animated attachment offsets
+remain intact. All role passes compose RAM before the existing single display
+update. The display driver, pin map and SPI/backlight behavior are unchanged.
 Battery status is not added.
 
 B on awake HOME keeps its 700 ms hop/heart, temporary EXCITED then HAPPY mood,
@@ -558,8 +611,8 @@ On the physical device:
   unchanged B equip/NONE and C back navigation.
 - Run each timer preset through focus/DONE. Check large countdown, book/gear
   overlap, night sleeping pose, happy completion, sound, and sleep inhibition.
-- Export Buddy before/after upload with erase disabled. Confirm progress, version
-  2, all six equipped slots and JSON confirmation behavior are unchanged.
+- Export Buddy before/after upload with erase disabled. Confirm progress and
+  all six equipped slots are unchanged; v2 upgrades to v3 with ORANGE and no setup.
 - Test an actual online weather/NTP fetch and subsequent cached wakes; check
   Serial for resets/allocation failures while the larger canvas is allocated.
 
@@ -631,9 +684,10 @@ extra fetch button were added to production firmware.
 
 ## Display migration file inventory
 
-Paths below are relative to `altoids-pet/`. This migration changes rendering,
-display power control and their tests; permanent save logic and bitmap arrays
-are unchanged.
+Paths below are relative to `altoids-pet/`. This historical inventory describes
+the ST7789 migration. Buddy Setup adds `buddy_setup.cpp/.h` and `palette.cpp`,
+and updates save/journal/role rendering without changing the working driver or
+pin map.
 
 ```text
 README.md
@@ -673,9 +727,26 @@ tests/display/stubs/Adafruit_SPIDevice.h  (new)
 tests/display/stubs/driver/gpio.h        (new)
 ```
 
-## License
+First-run/palette hardware checks:
 
-A license has not yet been selected; see `LICENSE`.
+- On your existing buddy, upload without erasing NVS. Setup must not appear.
+  Compare exported journal/records/discoveries/gear/start date to the backup;
+  only version and the new ORANGE/setup-complete fields should differ, apart
+  from any normally accepted live weather observation.
+- On a fresh test buddy, check WELCOME/B, all five A previews, wraparound, C back,
+  and B confirmation. Watch the actual kitsune's face/ears/muzzle/tail colors.
+  Confirm READY lasts about 1.6 seconds and returns home without a flash.
+- Let unfinished setup sleep, B wake, or remove/reconnect power. It must still
+  require confirmation, not silently accept an unconfirmed preview.
+- Confirm a color, then deep-sleep/wake and completely power-cycle. Setup must
+  remain completed and the same color must return. A/C preview causes no NVS
+  writes; repeated B after confirmation must not recommit setup.
+- Check selected color through every expression, B hop/heart, night sleep,
+  weather reactions, timer focus/book and DONE. Equip all slots and check masks,
+  eye readability, attachments and unchanged foreground/weather layering.
+- Export/import a v3 buddy and verify palette survives. Check old v2 backups
+  upgrade to ORANGE without setup. Invalid fur IDs, strings, missing fields and
+  bad checksums must leave the current buddy intact.
 
 Existing progress regression checks:
 

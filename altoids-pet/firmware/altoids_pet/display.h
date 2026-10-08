@@ -13,7 +13,8 @@ enum ScreenMode {
   TIMER_DONE,
   JOURNAL_SCREEN,
   RECORDS_SCREEN,
-  GEAR_SCREEN
+  GEAR_SCREEN,
+  BUDDY_SETUP_SCREEN
 };
 
 extern ScreenMode currentScreen;

@@ -10,7 +10,8 @@ namespace {
 constexpr uint32_t SAVE_MAGIC = 0x46574631; // FWF1 envelope, stable across versions.
 constexpr size_t V1_PAYLOAD_BYTES = 148;
 constexpr size_t COMMON_PAYLOAD_BYTES = 144;
-constexpr size_t PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
+constexpr size_t V2_PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
+constexpr size_t PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 uint64_t generation = 0;
@@ -50,6 +51,7 @@ void encodeCurrent(const BuddySaveData &s, uint8_t *p) {
   encodeCommon(s, p);
   p += COMMON_PAYLOAD_BYTES;
   for (GearId gear : s.equippedSlots) put32(p, static_cast<uint8_t>(gear));
+  put32(p, static_cast<uint8_t>(s.furPalette)); put32(p, s.setupComplete ? 1 : 0);
 }
 // Reconstruct the exact v1 payload for verifying old JSON checksums.
 uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
@@ -59,8 +61,17 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   uint8_t *p = bytes + COMMON_PAYLOAD_BYTES; put32(p, static_cast<uint8_t>(gear));
   return hashBytes(bytes, sizeof(bytes));
 }
+size_t payloadSize(uint32_t version) {
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+}
+uint32_t v2Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
+  encodeCommon(old, bytes); uint8_t *p = bytes + COMMON_PAYLOAD_BYTES;
+  for (GearId gear : old.equippedSlots) put32(p, static_cast<uint8_t>(gear));
+  return hashBytes(bytes, sizeof(bytes));
+}
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
-  if (length != (version == 1 ? V1_PAYLOAD_BYTES : PAYLOAD_BYTES)) return false;
+  if (length != payloadSize(version)) return false;
   s = BuddySaveData{};
   if (get32(p) != version) return false; s.createdAt = get64(p); s.totalObservations = get64(p);
   s.uniqueDaysObserved = get32(p); s.latestObservationAt = get64(p); s.lastObservedDate = get32(p);
@@ -82,13 +93,20 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
       gear = static_cast<GearId>(id);
     }
   }
+  if (version < SAVE_VERSION) {
+    s.furPalette = FurPaletteId::ORANGE; s.setupComplete = true;
+  } else {
+    uint32_t palette = get32(p), complete = get32(p);
+    if (palette >= FUR_PALETTE_COUNT || complete > 1) return false;
+    s.furPalette = static_cast<FurPaletteId>(palette); s.setupComplete = complete == 1;
+  }
   return validateBuddySave(s);
 }
 // Supported payloads decode explicitly into the current slot model.
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -105,7 +123,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -131,16 +149,16 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint32_t magic = get32(p), version = get32(p), payloadLength = get32(p);
   slotGeneration = get64(p);
   uint32_t checksum = get32(p);
-  if (version != SAVE_VERSION && version != 1) {
+  if (payloadSize(version) == 0) {
     unsupported = true;
     Serial.printf("ERROR: unsupported buddy saveVersion %lu in %s; writes disabled.\n",
                   static_cast<unsigned long>(version), key);
     return false;
   }
-  size_t expected = version == 1 ? V1_PAYLOAD_BYTES : PAYLOAD_BYTES;
+  size_t expected = payloadSize(version);
   if (length != HEADER_BYTES + expected || payloadLength != expected) return false;
   uint32_t calculated = hashBytes(bytes + HEADER_BYTES, expected, hashBytes(bytes, 20));
-  migrated = version == 1;
+  migrated = version < SAVE_VERSION;
   return magic == SAVE_MAGIC && slotGeneration > 0 && checksum == calculated &&
          migrateSupportedSave(version, bytes + HEADER_BYTES, expected, data);
 }
@@ -165,9 +183,10 @@ int migrateLegacyPet(BuddySaveData &data) {
   bool birthdayValid = prefs.isKey("birthday") && prefs.getBytesLength("birthday") == sizeof(birthday) &&
       prefs.getBytes("birthday", &birthday, sizeof(birthday)) == sizeof(birthday) && birthday > 0;
   uint64_t newest = 0;
-  bool found = false, unsupported = false;
+  bool found = false, unsupported = false, hadLegacyKeys = prefs.isKey("birthday");
   for (const char *key : {"state0", "state1", "state"}) {
     if (!prefs.isKey(key)) continue;
+    hadLegacyKeys = true;
     size_t length = prefs.getBytesLength(key);
     LegacyPet record = {};
     uint64_t candidateGeneration = 0;
@@ -190,7 +209,7 @@ int migrateLegacyPet(BuddySaveData &data) {
   prefs.end();
   if (unsupported) return -1;
   if (birthdayValid) { data.createdAt = birthday; found = true; }
-  return found ? 1 : 0;
+  return hadLegacyKeys && !found ? -1 : found ? 1 : 0;
 }
 
 bool validDate(uint32_t date) {
@@ -217,7 +236,7 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
-  if (s.saveVersion != SAVE_VERSION || s.createdAt < 0 || s.latestObservationAt < 0 ||
+  if (static_cast<uint8_t>(s.furPalette) >= FUR_PALETTE_COUNT || s.saveVersion != SAVE_VERSION || s.createdAt < 0 || s.latestObservationAt < 0 ||
       s.highestTemperatureAt < 0 || s.lowestTemperatureAt < 0 ||
       (s.discoveredWeather & ~0xffUL) || (s.unlockedGear & ~0x7fUL) ||
       (s.createdAt > 0 && dateAt(s.createdAt) == 0)) return false;
@@ -273,14 +292,17 @@ SaveLoadResult loadBuddySave(BuddySaveData &data) {
       data = candidate; generation = candidateGeneration; found = true; selectedMigrated = migrated;
     } else if (prefs.isKey(key)) Serial.printf("Buddy %s was not selected (invalid or older).\n", key);
   }
+  bool hadBuddyKeys = prefs.isKey("save0") || prefs.isKey("save1");
   prefs.end();
-  if (unsupported) return SaveLoadResult::PROTECTED;
+  if (unsupported || (hadBuddyKeys && !found)) return SaveLoadResult::PROTECTED;
   if (found) { writable = true; return selectedMigrated ? SaveLoadResult::MIGRATED_SAVE : SaveLoadResult::LOADED; }
   int legacy = migrateLegacyPet(data);
   if (legacy < 0) {
     Serial.println("ERROR: Legacy pet save unavailable/unsupported; preserving data, writes disabled.");
     return SaveLoadResult::PROTECTED;
   }
+  // Existing legacy buddies skip setup; their birthday remains authoritative.
+  data.setupComplete = legacy > 0;
   writable = true;
   return legacy > 0 ? SaveLoadResult::MIGRATED_PET : SaveLoadResult::NEW_BUDDY;
 }
@@ -314,6 +336,8 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   if (!validateBuddySave(s)) return false;
   JsonDocument doc;
   doc["saveVersion"] = s.saveVersion;
+  doc["furPalette"] = static_cast<uint8_t>(s.furPalette);
+  doc["setupComplete"] = s.setupComplete;
   doc["researchBeganAt"] = s.createdAt;
   doc["totalObservations"] = s.totalObservations;
   doc["uniqueDaysObserved"] = s.uniqueDaysObserved;
@@ -345,7 +369,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
   JsonDocument doc;
   if (deserializeJson(doc, json, length, DeserializationOption::NestingLimit(4))) return false;
   if (!doc.is<JsonObject>()) return false;
-  if (!doc["saveVersion"].is<uint32_t>() || (doc["saveVersion"].as<uint32_t>() != SAVE_VERSION && doc["saveVersion"].as<uint32_t>() != 1)) {
+  if (!doc["saveVersion"].is<uint32_t>() || payloadSize(doc["saveVersion"].as<uint32_t>()) == 0) {
     error = "Unsupported saveVersion; existing buddy preserved"; return false;
   }
   BuddySaveData s;
@@ -353,6 +377,14 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
   if (!doc[key].is<type>()) { error = "Missing or invalid " key; return false; } \
   s.field = doc[key].as<type>();
   uint32_t importedVersion = doc["saveVersion"].as<uint32_t>();
+  if (importedVersion < SAVE_VERSION) {
+    s.furPalette = FurPaletteId::ORANGE; s.setupComplete = true;
+  } else {
+    if (!doc["furPalette"].is<uint32_t>() || doc["furPalette"].as<uint32_t>() >= FUR_PALETTE_COUNT ||
+        !doc["setupComplete"].is<bool>()) { error = "Invalid fur palette/setup state"; return false; }
+    s.furPalette = static_cast<FurPaletteId>(doc["furPalette"].as<uint32_t>());
+    s.setupComplete = doc["setupComplete"].as<bool>();
+  }
   READ_FIELD("researchBeganAt", createdAt, int64_t)
   READ_FIELD("totalObservations", totalObservations, uint64_t)
   READ_FIELD("uniqueDaysObserved", uniqueDaysObserved, uint32_t)
@@ -401,6 +433,6 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   data = s; error = nullptr; return true;
 }

@@ -26,6 +26,7 @@ bool isDaylight() {return currentHour>=7 && currentHour<19;}
 void soundPetInteraction() {}
 void drawHome() {display.clearDisplay();drawPet(40,petReacting?23:29,isPetSleeping(),blinking);display.display();}
 
+#include "../../firmware/altoids_pet/palette.cpp"
 #include "../../firmware/altoids_pet/sprites.cpp"
 #include "../../firmware/altoids_pet/gear_sprites.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
@@ -87,7 +88,7 @@ int main() {
     int y=screen==HOME?29:screen==FOCUS_SCREEN?55:40;
     drawPet(40,y,sleeping,false);
     assert(bitmapCalls.front().x==40 && bitmapCalls.front().y==y+16);
-    assert(bitmapCalls.size()==(item.mask?3:2));
+    assert(bitmapCalls.size()==(item.mask?6:5));
   }
   // Every slot simultaneously: exact compositing order and shared animated anchors.
   for(auto &item:data.equippedSlots)item=GearId::NONE;
@@ -97,16 +98,16 @@ int main() {
   for(auto screen:{HOME,FOCUS_SCREEN,TIMER_DONE})for(bool sleeping:{false,true}) {
     rest();currentScreen=screen;int y=screen==HOME?29:screen==FOCUS_SCREEN?55:40;
     display.clearDisplay();drawPet(40,y,sleeping,false);
-    assert(bitmapCalls.size()==12); // Base + five mask/art pairs + glasses.
+    assert(bitmapCalls.size()==15); // Base + five mask/art pairs + glasses.
     uint16_t rendered[sizeof(pixels)];memcpy(rendered,pixels,sizeof(pixels));
-    display.clearDisplay();drawKitsuneSprite(sleeping?KITSUNE_SLEEP:screen==TIMER_DONE?KITSUNE_HAPPY:KITSUNE_IDLE,40,y+16);
+    display.clearDisplay();drawColoredKitsune(sleeping?KITSUNE_SLEEP:screen==TIMER_DONE?KITSUNE_HAPPY:KITSUNE_IDLE,40,y+16,data.furPalette);
     for(auto gear:outfit)drawGearItem(gear,40,y+16,false,false);
     assert(memcmp(rendered,pixels,sizeof(pixels))==0);
   }
   rest();idleAction=IdleAction::UMBRELLA;weatherState=reactionWeather=WEATHER_RAIN;
-  drawPet(40,29,false,false);assert(bitmapCalls.size()==10 && umbrellas==1);
+  drawPet(40,29,false,false);assert(bitmapCalls.size()==13 && umbrellas==1);
   rest();idleAction=IdleAction::SNOW_SHIVER;weatherState=reactionWeather=WEATHER_SNOW;
-  drawPet(40,29,false,false);assert(bitmapCalls.size()==10 && scarves==2);
+  drawPet(40,29,false,false);assert(bitmapCalls.size()==13 && scarves==2);
   rest();idleAction=IdleAction::STORM_CROUCH;weatherState=reactionWeather=WEATHER_STORM;
   drawPet(40,29,false,false);
   for(auto call:bitmapCalls)assert(call.x==80 ? call.y==38 && call.h==48 : call.y==48 && call.h==45);
@@ -139,12 +140,12 @@ int main() {
   // Existing weather supplies an equipped umbrella/scarf temporarily, not two.
   rest();setOnlyGear(GearId::UMBRELLA);idleAction=IdleAction::UMBRELLA;
   weatherState=reactionWeather=WEATHER_RAIN;drawPet(40,29,false,false);
-  assert(bitmapCalls.size()==1 && umbrellas==1);
+  assert(bitmapCalls.size()==4 && umbrellas==1);
   rest();setOnlyGear(GearId::WINTER_SCARF);idleAction=IdleAction::SNOW_SHIVER;
   weatherState=reactionWeather=WEATHER_SNOW;drawPet(40,29,false,false);
-  assert(bitmapCalls.size()==1 && scarves==2);
+  assert(bitmapCalls.size()==4 && scarves==2);
   // A stale weather action must not suppress equipped gear after weather changes.
-  weatherState=WEATHER_CLEAR;bitmapCalls.clear();drawPet(40,29,false,false);assert(bitmapCalls.size()==3);
+  weatherState=WEATHER_CLEAR;bitmapCalls.clear();drawPet(40,29,false,false);assert(bitmapCalls.size()==6);
   rest();setOnlyGear(GearId::UMBRELLA);assert(interactWithPet());drawPet(40,23,false,false);
   assert(bitmapCalls[0].y==39 && bitmapCalls.back().x==80 && bitmapCalls.back().y==29);
   // Gear adds zero display transfers; the existing animation gate pushes once.

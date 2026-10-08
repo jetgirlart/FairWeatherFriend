@@ -1,5 +1,6 @@
 #include "display.h"
 #include "journal_ui.h"
+#include "buddy_setup.h"
 #include "pet.h"
 #include "weather.h"
 #include "timer.h"
@@ -548,6 +549,7 @@ void drawMenu() {
 }
 
 void handleButtons(bool aPressed, bool bPressed, bool cPressed) {
+  if (handleBuddySetupButtons(aPressed, bPressed, cPressed)) return;
   if (handleTimerButtons(aPressed, bPressed, cPressed)) return;
   if (handleJournalButtons(aPressed, bPressed, cPressed)) return;
   // ----------------------------------------------

@@ -6,6 +6,7 @@
 #include "sound.h"
 #include "journal.h"
 #include "journal_ui.h"
+#include "buddy_setup.h"
 
 void setup() {
   // Keep the TFT dark during the existing Serial/clock/cache startup path.
@@ -26,7 +27,7 @@ void setup() {
   initializeAnimations();
   initializeSound();
   initializeTimer();
-  if (!showTimerScreen()) drawHome();
+  if (!beginBuddySetup() && !showTimerScreen()) drawHome();
   soundStartup();
 }
 
@@ -41,5 +42,6 @@ void loop() {
   updateSound();
   updateJournal();
   updateJournalScreens();
+  updateBuddySetup();
   sleepIfIdle();
 }

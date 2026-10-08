@@ -26,6 +26,55 @@ void drawKitsuneSprite(const uint8_t *bitmap, int x, int y,
   display.drawBitmap(x, y, scaled, width, height - (crouching ? 3 : 0), color);
 }
 
+void buildKitsuneRoles(const uint8_t *bitmap, uint8_t *roles) {
+  // Retain the exact expression/silhouette masks. Flood only exterior empty
+  // pixels; enclosed areas become fur. One shared classifier serves every frame.
+  constexpr int count = KITSUNE_WIDTH * KITSUNE_HEIGHT;
+  uint16_t queue[count]; int head = 0, tail = 0;
+  for (int i = 0; i < count; ++i) {
+    bool ink = pgm_read_byte(bitmap + (i / 24) * 3 + (i % 24) / 8) & (0x80 >> (i % 8));
+    roles[i] = ink ? 1 : 255;
+  }
+  auto exterior = [&](int i) {
+    if (roles[i] == 255) { roles[i] = 0; queue[tail++] = i; }
+  };
+  for (int n = 0; n < 24; ++n) { exterior(n); exterior(552 + n); exterior(n * 24); exterior(n * 24 + 23); }
+  while (head < tail) {
+    int i = queue[head++], x = i % 24, y = i / 24;
+    if (x > 0) exterior(i - 1); if (x < 23) exterior(i + 1);
+    if (y > 0) exterior(i - 24); if (y < 23) exterior(i + 24);
+  }
+  for (int i = 0; i < count; ++i) {
+    int x = i % 24, y = i / 24;
+    bool face = (y >= 8 && y <= 11 && ((x >= 3 && x <= 6) || (x >= 11 && x <= 14))) ||
+                (y >= 12 && y <= 14 && x >= 7 && x <= 9);
+    if (roles[i] == 1 && face) roles[i] = static_cast<uint8_t>(SpritePixelRole::DETAIL);
+    else if (roles[i] == 255) {
+      bool accent = y < 7 || (y >= 12 && y <= 14 && x >= 4 && x <= 14) ||
+                    (x >= 19 && y >= 13) || y >= 21;
+      roles[i] = static_cast<uint8_t>(accent ? SpritePixelRole::ACCENT : SpritePixelRole::PRIMARY);
+    }
+  }
+}
+void drawRoleSprite(const uint8_t *roles, int x, int y, const SpritePalette &palette,
+                    uint8_t earOffset, bool crouching) {
+  const uint16_t colors[] = {0, palette.outline, palette.primary, palette.accent, palette.detail};
+  for (uint8_t role = 1; role <= 4; ++role) {
+    uint8_t mask[KITSUNE_BITMAP_BYTES] = {}; bool present = false;
+    for (int i = 0; i < 576; ++i) if (roles[i] == role) {
+      mask[i / 8] |= 0x80 >> (i % 8); present = true;
+    }
+    // ESP32 pgm_read_byte supports both RAM and flash masks. Existing scaling,
+    // ear twitch, torso compression and display transform are shared unchanged.
+    if (present) drawKitsuneSprite(mask, x, y, earOffset, crouching, colors[role]);
+  }
+}
+void drawColoredKitsune(const uint8_t *bitmap, int x, int y, FurPaletteId palette,
+                        uint8_t earOffset, bool crouching) {
+  uint8_t roles[576]; buildKitsuneRoles(bitmap, roles);
+  drawRoleSprite(roles, x, y, furPalette(palette), earOffset, crouching);
+}
+
 // Original outline kitsune artwork. Each comment is its corresponding row:
 // # = white pixel, . = transparent. Edit only the desired 72-byte bitmap.
 // LOOK_UP supplements the nine base expressions for the existing night reaction.

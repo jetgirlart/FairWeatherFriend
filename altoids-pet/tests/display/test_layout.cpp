@@ -15,9 +15,13 @@ const char *moonPhaseName(){return "FULL MOON";}
 void soundPetInteraction(){}
 bool handleTimerButtons(bool,bool,bool){return false;}
 void openTimerSetup(){}
+bool showTimerScreen(){return false;}
 BuddySaveData buddy;
 const BuddySaveData &getBuddySave(){return buddy;}
 bool journalAvailable(){return true;}
+bool buddyNeedsSetup(){return !buddy.setupComplete;}
+bool setupCommitFails=false;unsigned setupCommits=0;
+bool confirmBuddySetup(FurPaletteId id){if(setupCommitFails)return false;buddy.furPalette=id;buddy.setupComplete=true;setupCommits++;return true;}
 uint32_t buddySaveChecksum(const BuddySaveData&){return 123;}
 bool equipJournalGear(GearSlot slot,GearId gear){buddy.equippedSlots[static_cast<uint8_t>(slot)]=gear;return true;}
 #include "../../firmware/altoids_pet/gear.cpp"
@@ -26,6 +30,7 @@ bool equipJournalGear(GearSlot slot,GearId gear){buddy.equippedSlots[static_cast
 #include "../../firmware/altoids_pet/pet.cpp"
 #include "../../firmware/altoids_pet/journal_ui.cpp"
 #include "../../firmware/altoids_pet/display.cpp"
+#include "../../firmware/altoids_pet/buddy_setup.cpp"
 void snapshot(const char *name){
  char path[100];snprintf(path,sizeof(path),"/tmp/fwf-tft-%s.ppm",name);
  FILE *out=fopen(path,"wb");assert(out);fprintf(out,"P6\n240 240\n255\n");
@@ -64,5 +69,24 @@ int main(){
  handleJournalButtons(true,false,false);snapshot("latest");
  handleJournalButtons(true,false,false);snapshot("counts");
  openJournalScreen(RECORDS_SCREEN);snapshot("records");
+ buddy.setupComplete=true;assert(!beginBuddySetup());
+ buddy.setupComplete=false;assert(beginBuddySetup() && buddySetupActive());snapshot("welcome");
+ unsigned commits=setupCommits;handleBuddySetupButtons(true,false,false);assert(page==SetupPage::WELCOME);
+ handleBuddySetupButtons(false,true,false);assert(page==SetupPage::FUR);
+ for(int id=0;id<5;++id){
+   assert(highlighted==static_cast<FurPaletteId>(id));snapshot(furPaletteName(highlighted));
+   handleBuddySetupButtons(true,false,false);
+ }
+ assert(highlighted==FurPaletteId::ORANGE && setupCommits==commits);
+ handleBuddySetupButtons(false,false,true);assert(page==SetupPage::WELCOME);
+ handleBuddySetupButtons(false,true,false);handleBuddySetupButtons(true,false,false);
+ setupCommitFails=true;handleBuddySetupButtons(false,true,false);
+ assert(saveFailed && page==SetupPage::FUR && !buddy.setupComplete && setupCommits==commits);
+ setupCommitFails=false;handleBuddySetupButtons(false,true,false);assert(page==SetupPage::READY && buddy.furPalette==FurPaletteId::CREAM && setupCommits==commits+1);snapshot("ready");
+ handleBuddySetupButtons(true,true,true);assert(setupCommits==commits+1 && page==SetupPage::READY);
+ fakeMillis=readyAt+1599;updateBuddySetup();assert(buddySetupActive());
+ fakeMillis++;updateBuddySetup();assert(currentScreen==HOME && !beginBuddySetup());
+ // Importing a completed buddy during unfinished setup returns home without another save.
+ buddy.setupComplete=false;assert(beginBuddySetup());buddy.setupComplete=true;updateBuddySetup();assert(currentScreen==HOME);
  puts("PASS: physical TFT compositing, all weather and combined gear, idle poses, sleep, minute-only partial updates, menus/timer/journal/records/gear layouts; previews saved in /tmp/fwf-tft-*.ppm.");
 }

@@ -28,6 +28,7 @@ void Adafruit_ST7789::endWrite(){assert(windowH==0);}
 void Adafruit_ST7789::enableDisplay(bool on){assert(backlight==LOW);displayOn=on;}
 void Adafruit_ST7789::enableSleep(bool on){assert(!displayOn && backlight==LOW);panelSleeping=on;}
 #include "../../firmware/altoids_pet/display_surface.cpp"
+#include "../../firmware/altoids_pet/palette.cpp"
 #include "../../firmware/altoids_pet/sprites.cpp"
 #ifndef FWF_LAYOUT_TEST
 int main(){
@@ -44,6 +45,22 @@ int main(){
  for(int y=0;y<72;y++)for(int x=0;x<72;x++){
    bool bit=KITSUNE_IDLE[(y/3)*3+(x/3)/8]&(0x80>>((x/3)%8));
    assert(display.getBuffer()[(70+y)*240+60+x]==(bit?0xA55A:COLOR_BACKGROUND));
+ }
+ // Role palettes reuse every existing expression: exact 3x blocks and transparent exterior.
+ const uint8_t *expressions[]={KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,
+                              KITSUNE_HAPPY,KITSUNE_EXCITED,KITSUNE_SLEEPY,KITSUNE_SLEEP,KITSUNE_BOUNCE,KITSUNE_LOOK_UP};
+ uint8_t roles[576];buildKitsuneRoles(KITSUNE_IDLE,roles);
+ assert(roles[0]==0 && roles[9*24+5]==static_cast<uint8_t>(SpritePixelRole::DETAIL));
+ for(uint8_t id=0;id<5;++id)for(auto art:expressions){
+   display.clearDisplay();display.beginPet(60,70);drawColoredKitsune(art,0,0,static_cast<FurPaletteId>(id));display.endPet();
+   buildKitsuneRoles(art,roles);const auto &colors=furPalette(static_cast<FurPaletteId>(id));
+   const uint16_t expected[]={COLOR_BACKGROUND,colors.outline,colors.primary,colors.accent,colors.detail};
+   bool present[5]={};
+   for(int y=0;y<72;y++)for(int x=0;x<72;x++){
+     uint8_t role=roles[(y/3)*24+x/3];assert(role<=4);present[role]=true;
+     assert(display.getBuffer()[(70+y)*240+60+x]==expected[role]);
+   }
+   for(bool exists:present)assert(exists);
  }
  display.display();assert(windows>0 && windows<225);
  sleepDisplay();assert(backlight==LOW && held && panelSleeping && !displayOn);

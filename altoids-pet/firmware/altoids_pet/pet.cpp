@@ -1,6 +1,7 @@
 #include "pet.h"
 #include "config.h"
 #include "display.h"
+#include "journal.h"
 #include "weather.h"
 #include "sound.h"
 #include "sprites.h"
@@ -297,7 +298,7 @@ void drawPet(
 
   // 48x48 presentation inside the old 48x64 anchor preserves the feet baseline
   // and existing B hop, focus book, heart, and DONE bounce coordinates.
-  drawKitsuneSprite(sprite, x, y + 16, earOffset, crouching, petPalette.fur);
+  drawColoredKitsune(sprite, x, y + 16, getBuddySave().furPalette, earOffset, crouching);
   GearId weatherAccessory = GearId::NONE;
   if (expressIdle && idleAction == IdleAction::UMBRELLA) weatherAccessory = GearId::UMBRELLA;
   if (expressIdle && idleAction == IdleAction::SNOW_SHIVER) weatherAccessory = GearId::WINTER_SCARF;

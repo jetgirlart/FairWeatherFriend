@@ -2,8 +2,9 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 2;
+constexpr uint32_t SAVE_VERSION = 3;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -37,6 +38,8 @@ struct BuddySaveData {
   uint32_t discoveredWeather = 0; // Bit n corresponds to WeatherCategory n.
   uint32_t unlockedGear = 0;     // Bit (GearId - 1), NONE has no bit.
   GearId equippedSlots[GEAR_SLOT_COUNT] = {};
+  FurPaletteId furPalette = FurPaletteId::ORANGE;
+  bool setupComplete = false; // Only genuinely new buddies need first-run setup.
 };
 
 // Only permanent fields are serialized, explicitly as little-endian values.

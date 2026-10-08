@@ -68,7 +68,7 @@ void initializeJournal() {
   retryPending = false; importPending = false;
   serialLength = 0; serialOverflow = false;
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
-                       result == SaveLoadResult::MIGRATED_SAVE ? "NVS v1 (slot migration queued)" :
+                       result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (palette migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
                        result == SaveLoadResult::NEW_BUDDY ? "newly initialized" : "protected/unavailable NVS";
   Serial.printf("Field Journal loaded from %s: observations %llu, days %lu, research began %lld\n",
@@ -78,6 +78,17 @@ void initializeJournal() {
 
 const BuddySaveData &getBuddySave() { return buddy; }
 bool journalAvailable() { return available; }
+bool buddyNeedsSetup() { return available && !buddy.setupComplete; }
+bool confirmBuddySetup(FurPaletteId palette) {
+  if (!buddyNeedsSetup() || static_cast<uint8_t>(palette) >= FUR_PALETTE_COUNT) return false;
+  BuddySaveData next = buddy;
+  next.furPalette = palette; next.setupComplete = true;
+  // Commit and verify before completing setup or replacing pending runtime data.
+  if (!persistBuddySave(next)) return false;
+  buddy = next; dirty = false; retryPending = false;
+  Serial.printf("Buddy setup saved: fur palette %u. Ready for field work!\n", static_cast<uint8_t>(palette));
+  return true;
+}
 
 void checkpointJournal(bool beforeSleep) {
   if (!available) return;
