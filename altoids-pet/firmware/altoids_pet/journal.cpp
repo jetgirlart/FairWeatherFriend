@@ -230,8 +230,9 @@ void updateBuddySerial() {
     int next = Serial.read();
     if (next < 0) break;
     char c = static_cast<char>(next);
-    if (c == '\r') continue;
-    if (c == '\n') {
+    // Arduino Serial Monitor supports LF, CR, and CRLF. An empty second
+    // terminator is harmless and must never execute a command twice.
+    if (c == '\n' || c == '\r') {
       serialLine[serialLength] = 0;
       if (serialOverflow) { cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED; Serial.println("Buddy command too long; discarded without writing."); }
       else processSerialLine();

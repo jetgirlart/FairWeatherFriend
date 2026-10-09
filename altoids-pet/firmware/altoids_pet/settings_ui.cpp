@@ -68,6 +68,7 @@ void draw() {
       text(93, failed ? "BUDDY PRESERVED" : "TO COMPUTER");
       text(137, "WAITING...");
       text(180, importing ? "Send IMPORT_BUDDY" : "Send EXPORT_BUDDY", 1);
+      text(195, "SERIAL: 115200 + ENTER", 1);
       text(217, "C:BACK", 1);
     }
   } else {

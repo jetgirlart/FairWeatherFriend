@@ -358,7 +358,7 @@ The focus/timer screens currently have no temperature display.
 
 LOCATION displays six-decimal latitude/longitude and whether they come from
 config or NVS. There is no keyboard/GPS. Send `SET_LOCATION <latitude> <longitude>`
-at 115200 baud with newline. Finite latitude [-90,90] and longitude [-180,180]
+at 115200 baud with a newline or carriage return. Finite latitude [-90,90] and longitude [-180,180]
 are required; trailing garbage, missing values and failed NVS writes leave the
 old location/cache intact. Coordinates persist as integer microdegrees. A
 successful changed location marks runtime/RTC weather and sunrise/sunset stale
@@ -410,9 +410,26 @@ continuously; a 250 ms check refreshes them only if the saved-data checksum or
 availability changes, such as after USB import. Normal inactivity sleep and B
 wake still apply to these screens. Wake returns to the existing home/timer flow.
 
+## Desktop backup utility
+
+Use [`../tools/fairweather_backup.py`](../tools/fairweather_backup.py) to export
+and import without Arduino IDE. Python 3.8+ and pyserial are required. See the
+[macOS, Windows and Linux setup instructions](../tools/README.md).
+
+```sh
+python tools/fairweather_backup.py export
+python tools/fairweather_backup.py import backups/your_backup.json
+python tools/fairweather_backup.py list-ports
+```
+
+Run from the repository root with the documented Python environment active.
+Auto-detection supports likely XIAO ports; `--port` overrides it. Exports create
+validated, timestamped JSON backups. Imports require typed computer confirmation
+and B on the buddy after device validation. Firmware/protocol are unchanged.
+
 ## USB Export Buddy / Import Buddy foundation
 
-Use USB Serial at **115200 baud**, with newline-terminated commands. Export/import
+Use USB Serial at **115200 baud**, with newline, carriage-return, or CRLF-terminated commands. Export/import
 serialize all permanent fields, including a canonical-payload FNV-1a checksum
 written as eight hexadecimal characters. It detects accidental corruption; it
 is not an authentication mechanism. JSON uses tenths Fahrenheit regardless of
@@ -448,7 +465,10 @@ CANCEL_IMPORT
 SET_LOCATION 32.000000 -95.000000
 ```
 
-1. Open SETTINGS → EXPORT BUDDY and send `EXPORT_BUDDY`. Copy only the JSON
+1. Open Serial Monitor on the XIAO USB port at 115200 baud; select Newline,
+   Carriage return, or Both NL & CR. Open SETTINGS → EXPORT BUDDY, type
+   `EXPORT_BUDDY` in Serial Monitor and press Send/Enter. Opening the device
+   screen alone waits for this computer request. Copy only the JSON
    object into `buddy.json`, excluding startup/diagnostic logs. Export also works
    as a development Serial command outside the transfer screens.
 2. Open SETTINGS → IMPORT BUDDY, then send `IMPORT_BUDDY ` followed by the

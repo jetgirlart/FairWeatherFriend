@@ -277,6 +277,26 @@ int main() {
  send(command);assert(nvsWrites==writes && importPending);assert(confirmBuddyImport(buddySaveChecksum(saved)));assert(nvsWrites==writes+1);
  writes=nvsWrites;send(std::string(4200,'x'));assert(nvsWrites==writes && !importPending);
  endBuddyTransfer();Serial.output.clear();send("EXPORT_BUDDY");assert(Serial.output.find("researchBeganAt")!=std::string::npos);
+ // LF, CR and CRLF each execute one export, never write or duplicate JSON.
+ auto exportSnapshot=getBuddySave();writes=nvsWrites;
+ for(const char *ending:{"\n","\r","\r\n"}) {
+   beginBuddyTransfer(false);Serial.output.clear();
+   std::string commandWithEnding=std::string("EXPORT_BUDDY")+ending;
+   for(char c:commandWithEnding)Serial.input.push_back(c);
+   while(Serial.available())updateBuddySerial();
+   assert(buddyTransferStatus()==BuddyTransferStatus::EXPORT_COMPLETE);
+   BuddySaveData parsed;const char *parseError=nullptr;
+   assert(deserializeBuddySave(Serial.output.c_str(),Serial.output.size(),parsed,parseError));
+   auto position=Serial.output.find("researchBeganAt");assert(position!=std::string::npos);
+   assert(Serial.output.find("researchBeganAt",position+1)==std::string::npos);
+   assert(nvsWrites==writes && buddySaveChecksum(exportSnapshot)==buddySaveChecksum(getBuddySave()));
+ }
+ // No line ending means an incomplete command, not an export request.
+ beginBuddyTransfer(false);Serial.output.clear();
+ for(char c:std::string("EXPORT_BUDDY"))Serial.input.push_back(c);
+ while(Serial.available())updateBuddySerial();
+ assert(Serial.output.empty() && buddyTransferStatus()==BuddyTransferStatus::NONE);
+ Serial.input.push_back('\r');updateBuddySerial();assert(buddyTransferStatus()==BuddyTransferStatus::EXPORT_COMPLETE);
  // Central date boundaries rather than UTC midnight; DST follows system TZ.
  blank();fakeEpoch=1791316800; // 2026-10-06 20:00 UTC, 15:00 Central DST.
  observe(0,700,0);auto day=getBuddySave().lastObservedDate;
