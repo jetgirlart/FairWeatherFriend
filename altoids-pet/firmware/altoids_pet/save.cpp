@@ -1,4 +1,5 @@
 #include "save.h"
+#include "field_notes.h"
 #ifdef ARDUINO
 #include "config.h"
 #endif
@@ -10,6 +11,7 @@
 #define SOUND_ENABLED true
 #endif
 #include "gear.h"
+#include "gear_variants.h"
 #include "field_locations.h"
 #include "measurement_units.h"
 #include <Preferences.h>
@@ -28,9 +30,15 @@ constexpr size_t V3_PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
 constexpr size_t V4_PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
 constexpr size_t V5_PAYLOAD_BYTES = V4_PAYLOAD_BYTES + 24 + 12 * RECORD_COUNT;
 constexpr size_t V6_PAYLOAD_BYTES = V5_PAYLOAD_BYTES + 20 * FIELD_EVENT_COUNT + 16 * RECENT_ALERT_COUNT;
-constexpr size_t PAYLOAD_BYTES = V6_PAYLOAD_BYTES + 28 * FIELD_LOCATION_COUNT + 48;
+constexpr size_t V7_PAYLOAD_BYTES = V6_PAYLOAD_BYTES + 28 * FIELD_LOCATION_COUNT + 48;
+constexpr size_t V8_PAYLOAD_BYTES = V7_PAYLOAD_BYTES + 8 + 4 * 7 + 4 * GEAR_SLOT_COUNT;
+constexpr size_t FIELD_NOTE_BYTES = 56;
+constexpr size_t PAYLOAD_BYTES = V8_PAYLOAD_BYTES + 8 + FIELD_NOTE_BYTES * FIELD_NOTE_COUNT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
+// Save operations run synchronously on the firmware loop. Fixed scratch buffers
+// keep the larger checkpoints off ESP32's small loop-task stack; never serialized.
+uint8_t saveBytes[RECORD_BYTES], saveVerified[RECORD_BYTES];
 uint64_t generation = 0;
 bool writable = false;
 
@@ -91,6 +99,25 @@ void encodeLocations(const BuddySaveData &s, uint8_t *p) {
   put32(p, s.latestLocation); put32(p, s.highestTemperatureLocation); put32(p, s.lowestTemperatureLocation);
   for (const auto &record : s.records) put32(p, record.location);
 }
+void encodeVariants(const BuddySaveData &s, uint8_t *p) {
+  put64(p, s.freezingObservations);
+  for (uint32_t mask : s.unlockedVariants) put32(p, mask);
+  for (uint8_t variant : s.equippedVariants) put32(p, variant);
+}
+void encodeNotes(const BuddySaveData &s, uint8_t *p) {
+  put32(p, s.fieldNoteCount); put32(p, s.fieldNoteNext);
+  for (const auto &n : s.fieldNotes) {
+    put64(p, n.timestamp); put32(p, n.temperatureMilliC); put32(p, n.weatherCode);
+    put32(p, uint8_t(n.category)); put32(p, n.location); put32(p, n.metrics.validMask);
+    for (auto value : n.metrics.values) put32(p, value);
+    put32(p, n.outcomes); put32(p, n.severeEvents);
+  }
+}
+void migrateVariants(BuddySaveData &s) {
+  initializeGearVariants(s);
+  // Historical observations do not contain a freezing count. Only one is known.
+  s.freezingObservations = s.totalObservations && s.lowestTemperatureMilliC < 0 ? 1 : 0;
+}
 void migrateHome(BuddySaveData &s) {
   initializeHomeLocation(s, s.locationConfigured ? s.latitudeMicrodegrees / 1000000.0 : LATITUDE,
                          s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE);
@@ -104,7 +131,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case 7: return V7_PAYLOAD_BYTES; case 8: return V8_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -113,20 +140,34 @@ uint32_t v2Checksum(const BuddySaveData &s) {
   return hashBytes(bytes, sizeof(bytes));
 }
 uint32_t v3Checksum(const BuddySaveData &s) {
-  uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 3;
+  uint8_t bytes[V5_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 3;
   encodeCurrent(old, bytes); return hashBytes(bytes, V3_PAYLOAD_BYTES);
 }
 uint32_t v4Checksum(const BuddySaveData &s) {
-  uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 4;
+  uint8_t bytes[V5_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 4;
   encodeCurrent(old, bytes); return hashBytes(bytes, V4_PAYLOAD_BYTES);
 }
 uint32_t v5Checksum(const BuddySaveData &s) {
-  uint8_t bytes[V5_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 5;
-  encodeCurrent(old, bytes); return hashBytes(bytes, sizeof(bytes));
+  uint8_t bytes[V5_PAYLOAD_BYTES];
+  encodeCurrent(s, bytes); uint8_t *version = bytes; put32(version, 5); return hashBytes(bytes, sizeof(bytes));
 }
 uint32_t v6Checksum(const BuddySaveData &s) {
-  uint8_t bytes[V6_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 6;
-  encodeCurrent(old, bytes); encodeEvents(old, bytes + V5_PAYLOAD_BYTES);
+  uint8_t bytes[V6_PAYLOAD_BYTES];
+  encodeCurrent(s, bytes); encodeEvents(s, bytes + V5_PAYLOAD_BYTES);
+  uint8_t *version = bytes; put32(version, 6);
+  return hashBytes(bytes, sizeof(bytes));
+}
+uint32_t v7Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V7_PAYLOAD_BYTES];
+  encodeCurrent(s, bytes); encodeEvents(s, bytes + V5_PAYLOAD_BYTES); encodeLocations(s, bytes + V6_PAYLOAD_BYTES);
+  uint8_t *version = bytes; put32(version, 7);
+  return hashBytes(bytes, sizeof(bytes));
+}
+uint32_t v8Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V8_PAYLOAD_BYTES];
+  encodeCurrent(s, bytes); encodeEvents(s, bytes + V5_PAYLOAD_BYTES);
+  encodeLocations(s, bytes + V6_PAYLOAD_BYTES); encodeVariants(s, bytes + V7_PAYLOAD_BYTES);
+  uint8_t *version = bytes; put32(version, 8);
   return hashBytes(bytes, sizeof(bytes));
 }
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
@@ -194,6 +235,24 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
     if (!ref(s.latestLocation) || !ref(s.highestTemperatureLocation) || !ref(s.lowestTemperatureLocation)) return false;
     for (auto &record : s.records) if (!ref(record.location)) return false;
   }
+  if (version >= 8) {
+    s.freezingObservations = get64(p);
+    for (auto &mask : s.unlockedVariants) mask = get32(p);
+    for (auto &variant : s.equippedVariants) { uint32_t value = get32(p); if (value >= MAX_GEAR_VARIANTS) return false; variant = value; }
+  } else migrateVariants(s);
+  if (version >= 9) {
+    uint32_t count = get32(p), next = get32(p);
+    if (count > FIELD_NOTE_COUNT || next >= FIELD_NOTE_COUNT) return false;
+    s.fieldNoteCount = count; s.fieldNoteNext = next;
+    for (auto &n : s.fieldNotes) {
+      n.timestamp = get64(p); n.temperatureMilliC = int32_t(get32(p)); n.weatherCode = int32_t(get32(p));
+      uint32_t category = get32(p), location = get32(p);
+      if ((category >= WEATHER_CATEGORY_COUNT && category != 255) || (location >= FIELD_LOCATION_COUNT && location != 255)) return false;
+      n.category = WeatherCategory(category); n.location = location; n.metrics.validMask = get32(p);
+      for (auto &value : n.metrics.values) value = int32_t(get32(p));
+      n.outcomes = get32(p); n.severeEvents = get32(p);
+    }
+  }
   if (!validateBuddySave(s)) return false;
   if (version < 7) migrateHome(s);
   return validateBuddySave(s);
@@ -202,7 +261,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case 4: case 5: case 6: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -219,7 +278,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES && length != HEADER_BYTES + V6_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES && length != HEADER_BYTES + V6_PAYLOAD_BYTES && length != HEADER_BYTES + V7_PAYLOAD_BYTES && length != HEADER_BYTES + V8_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -234,7 +293,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
     free(future);
     return false;
   }
-  uint8_t bytes[RECORD_BYTES];
+  auto &bytes = saveBytes;
   if (prefs.getBytes(key, bytes, sizeof(bytes)) != length) {
     unsupported = true; // An unread key is not evidence that there is no buddy.
     Serial.printf("Buddy %s cannot be read; preserving NVS.\n", key);
@@ -332,7 +391,49 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  if (s.freezingObservations > s.totalObservations ||
+      (s.freezingObservations && s.lowestTemperatureMilliC >= 0)) return false;
+  for (uint8_t id = 1; id <= 7; ++id) {
+    uint32_t mask = s.unlockedVariants[id - 1]; bool owned = s.unlockedGear & gearFlag(GearId(id));
+    if ((mask & ~((1UL << gearVariantCount(GearId(id))) - 1)) || (owned ? !(mask & 1) : mask != 0)) return false;
+  }
+  for (uint8_t slot = 0; slot < GEAR_SLOT_COUNT; ++slot) {
+    if (s.equippedSlots[slot] == GearId::NONE ? s.equippedVariants[slot] != 0 :
+        !gearVariantUnlocked(s, s.equippedSlots[slot], s.equippedVariants[slot])) return false;
+  }
   auto validRef = [&s](uint8_t id) { return id == UNKNOWN_LOCATION || (locationExists(s, id) && s.locations[id].visited); };
+  if (s.fieldNoteCount > FIELD_NOTE_COUNT || s.fieldNoteNext >= FIELD_NOTE_COUNT ||
+      s.fieldNoteCount > s.totalObservations ||
+      (s.fieldNoteCount < FIELD_NOTE_COUNT && s.fieldNoteNext != s.fieldNoteCount)) return false;
+  int64_t newer = 0;
+  for (uint8_t age = 0; age < s.fieldNoteCount; ++age) {
+    const auto &n = *fieldNoteAt(s, age);
+    if (n.timestamp <= 0 || n.timestamp < s.createdAt || n.timestamp > s.latestObservationAt || !dateAt(n.timestamp) ||
+        (age == 0 && n.timestamp != s.latestObservationAt) || (age && newer - n.timestamp < 60) ||
+        uint8_t(n.category) >= WEATHER_CATEGORY_COUNT || n.weatherCode < 0 ||
+        !(s.discoveredWeather & (1UL << uint8_t(n.category))) ||
+        n.temperatureMilliC < s.lowestTemperatureMilliC || n.temperatureMilliC > s.highestTemperatureMilliC ||
+        !validRef(n.location) || (n.metrics.validMask & ~31UL) || (n.outcomes & ~FIELD_NOTE_OUTCOME_MASK) ||
+        (n.severeEvents & ~((1UL << FIELD_EVENT_COUNT) - 1)) ||
+        bool(n.outcomes & NEW_SEVERE_EVENT) != bool(n.severeEvents)) return false;
+    for (uint8_t i = 0; i < METRIC_COUNT; ++i)
+      if (n.metrics.has(MetricId(i)) ? !validMetric(MetricId(i), n.metrics.values[i]) : n.metrics.values[i] != 0) return false;
+    for (uint8_t i = 0; i < FIELD_EVENT_COUNT; ++i)
+      if ((n.severeEvents & (1UL << i)) && (!s.fieldEvents[i].count || s.fieldEvents[i].firstAt != n.timestamp)) return false;
+    if (age == 0 && (n.temperatureMilliC != s.latestTemperatureMilliC || n.weatherCode != s.latestWeatherCode ||
+        n.category != s.latestCategory || n.location != s.latestLocation || n.metrics.validMask != s.latestMetrics.validMask)) return false;
+    if (age == 0) for (uint8_t i = 0; i < METRIC_COUNT; ++i) if (n.metrics.values[i] != s.latestMetrics.values[i]) return false;
+    const uint32_t metricFlags[METRIC_COUNT] = {NEW_HUMIDITY_RECORD, NEW_WIND_RECORD, NEW_GUST_RECORD, NEW_PRESSURE_RECORD, NEW_PRECIP_RECORD};
+    for (uint8_t i = 0; i < METRIC_COUNT; ++i) if ((n.outcomes & metricFlags[i]) && !n.metrics.has(MetricId(i))) return false;
+    newer = n.timestamp;
+  }
+  // Unused slots have one canonical representation, including default UNKNOWN IDs.
+  for (uint8_t i = s.fieldNoteCount; i < FIELD_NOTE_COUNT; ++i) {
+    const auto &n = s.fieldNotes[i];
+    if (n.timestamp || n.temperatureMilliC || n.weatherCode != -1 || n.category != WeatherCategory::UNKNOWN ||
+        n.location != UNKNOWN_LOCATION || n.metrics.validMask || n.outcomes || n.severeEvents) return false;
+    for (auto value : n.metrics.values) if (value) return false;
+  }
   unsigned used = 0, visited = 0;
   for (const auto &location : s.locations) {
     if (location.used) {
@@ -425,7 +526,7 @@ bool validateBuddySave(const BuddySaveData &s) {
 }
 
 uint32_t buddySaveChecksum(const BuddySaveData &data) {
-  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + V6_PAYLOAD_BYTES);
+  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + V8_PAYLOAD_BYTES);
   return hashBytes(bytes, sizeof(bytes));
 }
 
@@ -465,18 +566,19 @@ bool buddySaveWritable() { return writable; }
 
 bool persistBuddySave(const BuddySaveData &data) {
   if (!writable || !validateBuddySave(data) || generation == UINT64_MAX) return false;
-  uint8_t bytes[RECORD_BYTES] = {};
+  auto &bytes = saveBytes;
+  memset(bytes, 0, sizeof(bytes));
   uint8_t *p = bytes;
   uint64_t next = generation + 1;
   put32(p, SAVE_MAGIC); put32(p, data.saveVersion); put32(p, PAYLOAD_BYTES); put64(p, next);
-  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + HEADER_BYTES + V6_PAYLOAD_BYTES);
+  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + HEADER_BYTES + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + HEADER_BYTES + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + HEADER_BYTES + V8_PAYLOAD_BYTES);
   uint32_t checksum = hashBytes(bytes + HEADER_BYTES, PAYLOAD_BYTES, hashBytes(bytes, 20));
   p = bytes + 20; put32(p, checksum);
   Preferences prefs;
   if (!prefs.begin("fwf-buddy", false)) return false;
   const char *key = next % 2 ? "save1" : "save0";
   // Each putBytes commits one atomic NVS blob; alternate slots retain fallback.
-  uint8_t verified[RECORD_BYTES];
+  auto &verified = saveVerified;
   bool saved = prefs.putBytes(key, bytes, sizeof(bytes)) == sizeof(bytes) &&
                prefs.getBytesLength(key) == sizeof(bytes) &&
                prefs.getBytes(key, verified, sizeof(verified)) == sizeof(verified) &&
@@ -549,6 +651,25 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   doc["activeLocation"] = s.activeLocation; doc["fieldSitesVisited"] = s.fieldSitesVisited;
   doc["latestLocation"] = s.latestLocation;
   doc["highestTemperatureLocation"] = s.highestTemperatureLocation; doc["lowestTemperatureLocation"] = s.lowestTemperatureLocation;
+  doc["freezingObservations"] = s.freezingObservations;
+  JsonObject variants = doc["unlockedVariants"].to<JsonObject>();
+  for (uint8_t id = 1; id <= 7; ++id) variants[gearName(GearId(id))] = s.unlockedVariants[id - 1];
+  JsonObject equipped = doc["equippedVariants"].to<JsonObject>();
+  for (uint8_t slot = 0; slot < GEAR_SLOT_COUNT; ++slot) equipped[gearSlotName(GearSlot(slot))] = s.equippedVariants[slot];
+  doc["fieldNoteNext"] = s.fieldNoteNext;
+  JsonArray notes = doc["fieldNotes"].to<JsonArray>(); // Newest first; no unused slots exported.
+  for (uint8_t age = 0; age < s.fieldNoteCount; ++age) {
+    const auto &n = *fieldNoteAt(s, age); JsonObject note = notes.add<JsonObject>();
+    note["timestamp"] = n.timestamp; note["temperatureMilliC"] = n.temperatureMilliC;
+    note["weatherCode"] = n.weatherCode; note["category"] = uint8_t(n.category); note["location"] = n.location;
+    note["validMetrics"] = n.metrics.validMask;
+    JsonObject metrics = note["metrics"].to<JsonObject>();
+    for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+      if (n.metrics.has(MetricId(i))) metrics[metricName(MetricId(i))] = n.metrics.values[i];
+      else metrics[metricName(MetricId(i))] = nullptr;
+    }
+    note["outcomes"] = n.outcomes; note["severeEvents"] = n.severeEvents;
+  }
   char checksum[9]; snprintf(checksum, sizeof(checksum), "%08lx", static_cast<unsigned long>(buddySaveChecksum(s)));
   doc["checksum"] = checksum;
   if (doc.overflowed()) return false;
@@ -557,7 +678,7 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
 
 bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, const char *&error) {
   error = "Invalid JSON";
-  if (!json || length == 0 || length > BUDDY_IMPORT_BYTES) { error = "Import must be 1-12288 bytes"; return false; }
+  if (!json || length == 0 || length > BUDDY_IMPORT_BYTES) { error = "Import must be 1-24576 bytes"; return false; }
   JsonDocument doc;
   if (deserializeJson(doc, json, length, DeserializationOption::NestingLimit(4))) return false;
   if (!doc.is<JsonObject>()) return false;
@@ -697,6 +818,44 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
     s.fieldSitesVisited = doc["fieldSitesVisited"].as<uint64_t>();
     for (uint8_t i = 0; i < RECORD_COUNT; ++i) if (!ref(doc["records"][recordName(RecordId(i))]["location"], s.records[i].location)) return false;
   }
+  if (importedVersion >= 8) {
+    JsonObjectConst variants = doc["unlockedVariants"].as<JsonObjectConst>();
+    JsonObjectConst equipped = doc["equippedVariants"].as<JsonObjectConst>();
+    if (variants.isNull() || variants.size() != 7 || equipped.isNull() || equipped.size() != GEAR_SLOT_COUNT || !doc["freezingObservations"].is<uint64_t>()) return false;
+    s.freezingObservations = doc["freezingObservations"].as<uint64_t>();
+    for (uint8_t id = 1; id <= 7; ++id) {
+      auto mask = variants[gearName(GearId(id))]; if (!mask.is<uint32_t>()) return false; s.unlockedVariants[id - 1] = mask.as<uint32_t>();
+    }
+    for (uint8_t slot = 0; slot < GEAR_SLOT_COUNT; ++slot) {
+      auto value = equipped[gearSlotName(GearSlot(slot))]; if (!value.is<uint32_t>() || value.as<uint32_t>() >= MAX_GEAR_VARIANTS) return false;
+      s.equippedVariants[slot] = value.as<uint8_t>();
+    }
+  } else migrateVariants(s);
+  if (importedVersion >= 9) {
+    JsonArrayConst notes = doc["fieldNotes"].as<JsonArrayConst>();
+    if (notes.isNull() || notes.size() > FIELD_NOTE_COUNT || !doc["fieldNoteNext"].is<uint32_t>() ||
+        doc["fieldNoteNext"].as<uint32_t>() >= FIELD_NOTE_COUNT) { error = "Invalid field-note ring"; return false; }
+    s.fieldNoteCount = notes.size(); s.fieldNoteNext = doc["fieldNoteNext"].as<uint8_t>();
+    uint8_t age = 0;
+    for (JsonObjectConst note : notes) {
+      if (note.size() != 9 || !note["timestamp"].is<int64_t>() || !note["temperatureMilliC"].is<int32_t>() ||
+          !note["weatherCode"].is<int32_t>() || !note["category"].is<uint32_t>() || note["category"].as<uint32_t>() >= WEATHER_CATEGORY_COUNT ||
+          !note["location"].is<uint32_t>() || (note["location"].as<uint32_t>() != 255 && note["location"].as<uint32_t>() >= FIELD_LOCATION_COUNT) ||
+          !note["validMetrics"].is<uint32_t>() || !note["outcomes"].is<uint32_t>() || !note["severeEvents"].is<uint32_t>()) { error = "Invalid field note"; return false; }
+      FieldNote &n = s.fieldNotes[(s.fieldNoteNext + FIELD_NOTE_COUNT - 1 - age++) % FIELD_NOTE_COUNT];
+      n.timestamp = note["timestamp"].as<int64_t>(); n.temperatureMilliC = note["temperatureMilliC"].as<int32_t>();
+      n.weatherCode = note["weatherCode"].as<int32_t>(); n.category = WeatherCategory(note["category"].as<uint8_t>());
+      n.location = note["location"].as<uint8_t>(); n.metrics.validMask = note["validMetrics"].as<uint32_t>();
+      n.outcomes = note["outcomes"].as<uint32_t>(); n.severeEvents = note["severeEvents"].as<uint32_t>();
+      JsonObjectConst metrics = note["metrics"].as<JsonObjectConst>();
+      if (metrics.isNull() || metrics.size() != METRIC_COUNT) return false;
+      for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+        auto value = metrics[metricName(MetricId(i))];
+        if (value.isUnbound() || (n.metrics.has(MetricId(i)) ? !value.is<int32_t>() : !value.isNull())) return false;
+        if (n.metrics.has(MetricId(i))) n.metrics.values[i] = value.as<int32_t>();
+      }
+    }
+  }
   if (!validateBuddySave(s)) { error = "Inconsistent journal, records or gear"; return false; }
   const char *text = doc["checksum"].as<const char *>();
   if (!text || strlen(text) != 8) { error = "Missing checksum"; return false; }
@@ -706,7 +865,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : importedVersion == 7 ? v7Checksum(s) : importedVersion == 8 ? v8Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   if (importedVersion < 7) migrateHome(s);
   data = s; error = nullptr; return true;
 }

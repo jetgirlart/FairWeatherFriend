@@ -56,3 +56,6 @@ bool upsertFieldLocation(uint8_t id, const char *name, double latitude, double l
 bool activateFieldLocation(uint8_t id);
 bool deleteFieldLocation(uint8_t id, uint8_t replacement = UNKNOWN_LOCATION);
 void listFieldLocations(Print &output);
+
+bool equipJournalGearVariant(GearSlot slot, GearId gear, uint8_t variant);
+bool takeNewGearVariant(GearId &gear, uint8_t &variant);

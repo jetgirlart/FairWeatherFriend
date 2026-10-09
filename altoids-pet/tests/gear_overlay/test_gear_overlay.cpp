@@ -29,7 +29,9 @@ void drawHome(){display.clearDisplay();setSpriteOrigin(72,56);drawPet(0,petReact
 #include "../../firmware/altoids_pet/kitsune_assets.cpp"
 #include "../../firmware/altoids_pet/gear_sprites.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
+#include "../../firmware/altoids_pet/gear_variants.cpp"
 bool equipJournalGear(GearSlot,GearId){return false;}
+bool equipJournalGearVariant(GearSlot,GearId,uint8_t){return false;}
 #include "../../firmware/altoids_pet/gear_overlay.cpp"
 #include "../../firmware/altoids_pet/pet.cpp"
 void rest(){
@@ -119,5 +121,18 @@ int main(){
  available=false;std::vector<uint16_t> before(pixels,pixels+240*240);drawEquippedGear(0,16,false,false);checkPixels(before);
  rest();lastAnimationTime=fakeMillis;unsigned transfers=pushes;
  fakeMillis+=249;updateAnimations();assert(pushes==transfers);fakeMillis++;updateAnimations();assert(pushes==transfers+1);
+ // Every variant reuses the identical bitmap and mask footprint; only RGB565 changes.
+ for(auto item:items){
+  rest();display.clearDisplay();drawGearItem(item.id,0,16,false,false,0);std::vector<uint16_t> original(pixels,pixels+240*240);
+  for(uint8_t variant=1;variant<gearVariantCount(item.id);variant++){
+   display.clearDisplay();drawGearItem(item.id,0,16,false,false,variant);
+   bool changed=false;
+   for(size_t i=0;i<original.size();i++){
+    assert((original[i]==COLOR_BACKGROUND)==(pixels[i]==COLOR_BACKGROUND));
+    if(original[i]!=pixels[i])changed=true;
+   }
+   assert(changed);
+  }
+ }
  puts("PASS: native gear masks/transparency/2x scaling, independent layer order, home/focus/DONE/sleep, all palettes and idle poses, gaze through glasses, shared weather accessories, protected saves and unchanged animation cadence.");
 }

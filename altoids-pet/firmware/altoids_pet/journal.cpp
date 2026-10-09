@@ -1,5 +1,7 @@
 #include "journal.h"
+#include "field_notes.h"
 #include "gear.h"
+#include "gear_variants.h"
 #include "field_locations.h"
 #include <ArduinoJson.h>
 #include "weather.h"
@@ -20,6 +22,15 @@ char serialLine[BUDDY_IMPORT_BYTES + 14];
 size_t serialLength = 0;
 bool serialOverflow = false;
 uint32_t newFieldEvents = 0;
+uint32_t newGearVariants[GEAR_ITEM_COUNT] = {};
+void queueVariantUnlocks(const BuddySaveData &next) {
+  for (uint8_t i = 0; i < GEAR_ITEM_COUNT; ++i) {
+    uint32_t added = next.unlockedVariants[i] & ~buddy.unlockedVariants[i];
+    newGearVariants[i] |= added;
+    for (uint8_t variant = 0; variant < gearVariantCount(GearId(i + 1)); ++variant)
+      if (added & (1UL << variant)) Serial.printf("New gear color: %s - %s\n", gearName(GearId(i + 1)), gearVariantName(GearId(i + 1), variant));
+  }
+}
 bool buttonImportRequired = false;
 BuddyTransferStatus transferStatus = BuddyTransferStatus::NONE;
 
@@ -96,7 +107,7 @@ void initializeJournal() {
   }
   retryPending = false; importPending = false;
   buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
-  serialLength = 0; serialOverflow = false; newFieldEvents = 0;
+  serialLength = 0; serialOverflow = false; newFieldEvents = 0; memset(newGearVariants, 0, sizeof(newGearVariants));
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
                        result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (settings migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
@@ -198,9 +209,18 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
     if (record.timestamp == 0 || (i == uint8_t(RecordId::LOW_PRESSURE) ? value < record.value : value > record.value))
       record = {value, observation.timestamp, next.latestLocation};
   }
+  if (observation.temperatureMilliC < 0 && next.freezingObservations < UINT64_MAX) ++next.freezingObservations;
   evaluateGearUnlocks(next);
+  evaluateGearVariants(next);
+  FieldNote note;
+  note.timestamp = next.latestObservationAt; note.temperatureMilliC = next.latestTemperatureMilliC;
+  note.weatherCode = next.latestWeatherCode; note.category = next.latestCategory;
+  note.location = next.latestLocation; note.metrics = next.latestMetrics;
+  note.outcomes = observationOutcomes(buddy, next);
+  appendFieldNote(next, note);
   if (!validateBuddySave(next)) { Serial.println("Observation rejected by save validation."); return false; }
   uint32_t unlocked = next.unlockedGear & ~buddy.unlockedGear;
+  queueVariantUnlocks(next);
   buddy = next; dirty = true;
   for (uint8_t id = 1; id <= 7; ++id) {
     GearId gear = static_cast<GearId>(id);
@@ -213,15 +233,15 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   return true;
 }
 
-bool equipJournalGear(GearSlot slot, GearId gear) {
+bool equipJournalGear(GearSlot slot, GearId gear) { return equipJournalGearVariant(slot, gear, 0); }
+bool equipJournalGearVariant(GearSlot slot, GearId gear, uint8_t variant) {
   if (!available || !gearFitsSlot(gear, slot) ||
-      (gear != GearId::NONE && !(buddy.unlockedGear & gearFlag(gear)))) return false;
-  if (gear == buddy.equippedSlots[static_cast<uint8_t>(slot)]) return true;
-  // Commit first so a failed selection does not replace the equipped item.
-  BuddySaveData next = buddy; next.equippedSlots[static_cast<uint8_t>(slot)] = gear;
+      (gear == GearId::NONE ? variant != 0 : !gearVariantUnlocked(buddy, gear, variant))) return false;
+  uint8_t index = uint8_t(slot);
+  if (buddy.equippedSlots[index] == gear && buddy.equippedVariants[index] == variant) return true;
+  BuddySaveData next = buddy; next.equippedSlots[index] = gear; next.equippedVariants[index] = variant;
   if (!persistBuddySave(next)) return false;
-  buddy = next; dirty = false; retryPending = false;
-  return true;
+  buddy = next; dirty = false; retryPending = false; return true;
 }
 
 bool exportBuddy(Print &output) {
@@ -255,7 +275,7 @@ bool confirmBuddyImport(uint32_t checksum) {
        buddy.locations[buddy.activeLocation].longitudeMicrodegrees != pendingImport.locations[pendingImport.activeLocation].longitudeMicrodegrees);
   bool locationChanged = activeCoordinatesChanged || buddy.activeLocation != pendingImport.activeLocation || buddy.locationConfigured != pendingImport.locationConfigured ||
       buddy.latitudeMicrodegrees != pendingImport.latitudeMicrodegrees || buddy.longitudeMicrodegrees != pendingImport.longitudeMicrodegrees;
-  buddy = pendingImport; newFieldEvents = 0; dirty = false; retryPending = false;
+  buddy = pendingImport; newFieldEvents = 0; memset(newGearVariants, 0, sizeof(newGearVariants)); dirty = false; retryPending = false;
   if (locationChanged) invalidateWeatherLocation();
   transferStatus = BuddyTransferStatus::IMPORT_COMPLETE;
   cancelBuddyImport();
@@ -347,6 +367,7 @@ bool deleteFieldLocation(uint8_t id, uint8_t replacement) {
   if (next.activeLocation == id) { next.activeLocation = replacement; mirrorActiveLocation(next); }
   next.locations[id] = FieldLocation{};
   // Reusing a slot must never attribute an old record to a newly configured site.
+  for (auto &note : next.fieldNotes) if (note.location == id) note.location = UNKNOWN_LOCATION;
   for (auto &record : next.records) if (record.location == id) record.location = UNKNOWN_LOCATION;
   if (next.latestLocation == id) next.latestLocation = UNKNOWN_LOCATION;
   if (next.highestTemperatureLocation == id) next.highestTemperatureLocation = UNKNOWN_LOCATION;
@@ -391,8 +412,18 @@ bool latestJournalTemperature(int32_t &milliC) {
 }
 
 bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries) {
-  if (!available || !validateBuddySave(next)) return false;
-  buddy = next; dirty = true; newFieldEvents |= discoveries;
+  if (!available) return false;
+  BuddySaveData progress = next; evaluateGearVariants(progress);
+  // Alert collection follows the accepted live observation in the same session.
+  if (progress.fieldNoteCount && fieldNoteAt(progress, 0)->timestamp == progress.latestObservationAt) {
+    auto &note = progress.fieldNotes[(progress.fieldNoteNext + FIELD_NOTE_COUNT - 1) % FIELD_NOTE_COUNT];
+    note.severeEvents |= discoveries;
+    if (discoveries) note.outcomes |= NEW_SEVERE_EVENT;
+    if (addedGearVariant(buddy, progress)) note.outcomes |= NEW_GEAR_VARIANT;
+  }
+  if (!validateBuddySave(progress)) return false;
+  queueVariantUnlocks(progress);
+  buddy = progress; dirty = true; newFieldEvents |= discoveries;
   checkpointJournal(); // Existing retry/before-sleep policy protects failed writes.
   return true;
 }
@@ -404,4 +435,10 @@ FieldEventId takeNewFieldEvent() {
 }
 bool discoveredFieldEvent(FieldEventId id) {
   return available && uint8_t(id) < FIELD_EVENT_COUNT && buddy.fieldEvents[uint8_t(id)].count > 0;
+}
+
+bool takeNewGearVariant(GearId &gear, uint8_t &variant) {
+ for (uint8_t i = 0; i < GEAR_ITEM_COUNT; ++i) for (uint8_t v = 0; v < gearVariantCount(GearId(i + 1)); ++v)
+   if (newGearVariants[i] & (1UL << v)) { newGearVariants[i] &= ~(1UL << v); gear = GearId(i + 1); variant = v; return true; }
+ return false;
 }

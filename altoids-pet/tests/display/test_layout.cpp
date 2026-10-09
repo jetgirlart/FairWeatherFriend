@@ -41,7 +41,10 @@ bool setupCommitFails=false;unsigned setupCommits=0;
 bool confirmBuddySetup(FurPaletteId id){if(setupCommitFails)return false;buddy.furPalette=id;buddy.setupComplete=true;setupCommits++;return true;}
 uint32_t buddySaveChecksum(const BuddySaveData&){return 123;}
 bool equipJournalGear(GearSlot slot,GearId gear){buddy.equippedSlots[static_cast<uint8_t>(slot)]=gear;return true;}
+bool equipJournalGearVariant(GearSlot slot,GearId gear,uint8_t variant){buddy.equippedVariants[uint8_t(slot)]=variant;return equipJournalGear(slot,gear);}
+bool takeNewGearVariant(GearId&,uint8_t&){return false;}
 #include "../../firmware/altoids_pet/gear.cpp"
+#include "../../firmware/altoids_pet/gear_variants.cpp"
 #include "../../firmware/altoids_pet/gear_sprites.cpp"
 #include "../../firmware/altoids_pet/gear_overlay.cpp"
 #include "../../firmware/altoids_pet/pet.cpp"
@@ -64,7 +67,7 @@ int main(){
  fakeMillis+=2500;drawHome();
  for(int i=0;i<8;i++){buddy.locations[i].used=true;strcpy(buddy.locations[i].name,"123456789012345");}
  buddy.activeLocation=0;buddy.latestLocation=0;buddy.highestTemperatureLocation=0;buddy.lowestTemperatureLocation=1;
- buddy.unlockedGear=0x7f;
+ buddy.unlockedGear=0x7f;initializeGearVariants(buddy);
  const GearId gear[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
  for(int i=0;i<6;i++)buddy.equippedSlots[i]=gear[i];
  for(int i=0;i<=8;++i){weatherState=static_cast<WeatherState>(i);currentScreen=HOME;drawHome();assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));}
@@ -87,8 +90,11 @@ int main(){
    handleSettingsButtons(false,true,false);snprintf(name,sizeof(name),"settings-page-%d",item);snapshot(name);
    int pushed=windows;updateSettingsScreen();assert(windows==pushed);
  }
+ buddy.equippedVariants[uint8_t(GearSlot::BODY)]=4;buddy.unlockedVariants[uint8_t(GearId::RAINCOAT)-1]|=1UL<<4;
+ currentScreen=HOME;drawHome();snapshot("variant-outfit");
  openJournalScreen(GEAR_SCREEN);snapshot("gear");
  handleJournalButtons(false,true,false);snapshot("slot");
+ handleJournalButtons(false,true,false);snapshot("gear-color");
  buddy.createdAt=1800000000;buddy.totalObservations=UINT64_MAX;buddy.uniqueDaysObserved=999;
  buddy.discoveredWeather=0xff;buddy.latestObservationAt=1800000000;buddy.latestCategory=WeatherCategory::RAIN;
  buddy.latestTemperatureMilliC=fahrenheitDeciToMilliC(721);buddy.highestTemperatureMilliC=fahrenheitDeciToMilliC(1082);buddy.lowestTemperatureMilliC=fahrenheitDeciToMilliC(-142);
@@ -107,6 +113,13 @@ int main(){
   for(int i=0;i<10;i++){char name[32];snprintf(name,sizeof(name),"journal-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
  }
 
+ FieldNote note;note.timestamp=1800000000;note.temperatureMilliC=22222;note.weatherCode=61;
+ note.category=WeatherCategory::RAIN;note.location=0;note.metrics=buddy.latestMetrics;
+ note.outcomes=FIELD_NOTE_OUTCOME_MASK;note.severeEvents=0x7fff;appendFieldNote(buddy,note);
+ openJournalScreen(JOURNAL_SCREEN);for(int i=0;i<10;i++)handleJournalButtons(true,false,false);
+ snapshot("field-notes-index");handleJournalButtons(false,true,false);
+ for(int i=0;i<3;i++){char name[32];snprintf(name,sizeof(name),"field-note-%d",i);snapshot(name);
+   assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));handleJournalButtons(false,true,false);}
  buddy.setupComplete=true;assert(!beginBuddySetup());
  buddy.setupComplete=false;assert(beginBuddySetup() && buddySetupActive());snapshot("welcome");
  unsigned commits=setupCommits;handleBuddySetupButtons(true,false,false);assert(page==SetupPage::WELCOME);

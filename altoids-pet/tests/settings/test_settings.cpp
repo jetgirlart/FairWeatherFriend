@@ -69,7 +69,7 @@ int main(){
  assert(shown("IMPORT FAILED") && nvsWrites==writes && buddySaveChecksum(current)==buddySaveChecksum(getBuddySave()));failWrite=false;
  sendLine("IMPORT_BUDDY "+compact);updateSettingsScreen();handleSettingsButtons(false,true,false);
  assert(shown("IMPORT COMPLETE") && nvsWrites==writes+1);handleSettingsButtons(false,false,true);assert(currentScreen==HOME);
- choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 7"));
+ choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 9"));
  auto pushes=framePushes;for(unsigned i=0;i<30;i++){fakeMillis+=250;updateSettingsScreen();}assert(framePushes==pushes);
  handleSettingsButtons(false,false,true);handleSettingsButtons(false,false,true);assert(currentScreen==MENU);
  // Explicit import outside the screen is rejected; Serial cannot overwrite.

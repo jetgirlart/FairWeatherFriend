@@ -16,10 +16,11 @@ int main(){
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};
  assert(fetchWeather() && weatherValid && getBuddySave().totalObservations==1 && getBuddySave().fieldEvents[1].count==1);
  assert(httpUrls.size()==3 && httpUrls[2]=="https://api.weather.gov/alerts/active?point=32.000000,-95.000000");
- assert(httpHeaders[2]["User-Agent"]=="FairWeatherFriend/0.7.0 (https://github.com/jetgirlart/FairWeatherFriend)");
+ assert(httpHeaders[2]["User-Agent"]=="FairWeatherFriend/0.9.0 (https://github.com/jetgirlart/FairWeatherFriend)");
  assert(httpHeaders[2]["Accept"]=="application/geo+json");
  auto hash=buddySaveChecksum(getBuddySave());saveCachedData();WiFi.mode(WIFI_OFF);
  for(int i=0;i<100;++i)initializeWeather(true);
+ assert(getBuddySave().fieldNoteCount==1 && fieldNoteAt(getBuddySave(),0)->severeEvents==2);
  assert(httpUrls.size()==3 && WiFi.currentMode==WIFI_OFF && buddySaveChecksum(getBuddySave())==hash);
  // HTTP / invalid JSON / oversized / coverage failures never reject live weather.
  for(int scenario=0;scenario<6;++scenario){
@@ -40,7 +41,7 @@ int main(){
  prepare();assert(saveBuddyLocation(43.65,-79.38));httpReplies={{200,weatherReply},{404,"outside coverage"}};
  assert(fetchWeather() && httpUrls.size()==2 && getBuddySave().totalObservations==1);
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};assert(fetchWeather());
- httpReplies={{200,weatherReply}};assert(fetchWeather());assert(httpUrls.size()==4); // guard rejected: no NWS.
+ httpReplies={{200,weatherReply}};assert(fetchWeather());assert(httpUrls.size()==4 && getBuddySave().fieldNoteCount==1); // guard rejected: no NWS/note.
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};assert(fetchWeather());saveCachedData();
  assert(upsertFieldLocation(1,"TRAVEL",33,-96) && activateFieldLocation(1));
  assert(!weatherValid && !sunTimesValid && !cachedWeatherValid);
@@ -48,6 +49,6 @@ int main(){
  httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};initializeWeather(true);
  assert(getBuddySave().totalObservations==observed+1 && getBuddySave().latestLocation==1);
  assert(httpUrls.back()=="https://api.weather.gov/alerts/active?point=33.000000,-96.000000");
- prepare();httpReplies={{500,"fail"}};assert(!fetchWeather() && httpUrls.size()==1);
+ prepare();httpReplies={{500,"fail"}};assert(!fetchWeather() && httpUrls.size()==1 && getBuddySave().fieldNoteCount==0);
  puts("PASS: actual weather/NWS clients: correct endpoint/headers, supplemental failures, non-US skip, 100 cached wakes without NWS, rejected/failed observations without NWS.");
 }

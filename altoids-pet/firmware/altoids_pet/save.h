@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 7;
+constexpr uint32_t SAVE_VERSION = 9;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -55,13 +55,33 @@ enum class FieldEventId : uint8_t {
 };
 constexpr uint8_t FIELD_EVENT_COUNT = uint8_t(FieldEventId::COUNT);
 constexpr uint8_t RECENT_ALERT_COUNT = 32;
-constexpr size_t BUDDY_IMPORT_BYTES = 12288;
+constexpr size_t BUDDY_IMPORT_BYTES = 24576;
 struct FieldEventRecord {
   uint32_t count = 0; // count > 0 is the canonical discovered flag.
   int64_t firstAt = 0, latestAt = 0;
 };
 struct RecentAlert { uint64_t hash = 0; int64_t seenAt = 0; };
 const char *fieldEventName(FieldEventId id); // Stable export name / official NWS event.
+
+constexpr uint8_t FIELD_NOTE_COUNT = 16;
+// Stable outcome bits; append without reassigning existing IDs.
+enum FieldNoteOutcome : uint32_t {
+  NEW_WEATHER_DISCOVERY = 1UL << 0, NEW_HIGH_TEMP = 1UL << 1,
+  NEW_LOW_TEMP = 1UL << 2, NEW_WIND_RECORD = 1UL << 3,
+  NEW_GUST_RECORD = 1UL << 4, NEW_PRESSURE_RECORD = 1UL << 5,
+  NEW_PRECIP_RECORD = 1UL << 6, NEW_SEVERE_EVENT = 1UL << 7,
+  NEW_GEAR_UNLOCK = 1UL << 8, NEW_GEAR_VARIANT = 1UL << 9,
+  NEW_HUMIDITY_RECORD = 1UL << 10
+};
+constexpr uint32_t FIELD_NOTE_OUTCOME_MASK = (1UL << 11) - 1;
+struct FieldNote {
+  int64_t timestamp = 0;
+  int32_t temperatureMilliC = 0, weatherCode = -1;
+  WeatherCategory category = WeatherCategory::UNKNOWN;
+  uint8_t location = UNKNOWN_LOCATION;
+  WeatherMetrics metrics;
+  uint32_t outcomes = 0, severeEvents = 0; // Newly discovered stable FieldEventId bits.
+};
 
 struct BuddySaveData {
   uint32_t saveVersion = SAVE_VERSION;
@@ -95,6 +115,11 @@ struct BuddySaveData {
   uint8_t activeLocation = UNKNOWN_LOCATION, latestLocation = UNKNOWN_LOCATION;
   uint8_t highestTemperatureLocation = UNKNOWN_LOCATION, lowestTemperatureLocation = UNKNOWN_LOCATION;
   uint64_t fieldSitesVisited = 0; // Lifetime configured sites visited, including deleted sites.
+  uint32_t unlockedVariants[7] = {}; // Bit n = local variant ID n for item (index + 1).
+  uint8_t equippedVariants[GEAR_SLOT_COUNT] = {}; // 0 = original/default; NONE also uses 0.
+  uint64_t freezingObservations = 0;
+  FieldNote fieldNotes[FIELD_NOTE_COUNT] = {};
+  uint8_t fieldNoteCount = 0, fieldNoteNext = 0; // Next slot to overwrite.
   bool setupComplete = false; // Only genuinely new buddies need first-run setup.
 };
 

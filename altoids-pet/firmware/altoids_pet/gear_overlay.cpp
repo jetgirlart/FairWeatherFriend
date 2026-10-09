@@ -1,11 +1,12 @@
 #include "gear_overlay.h"
 #include "gear_sprites.h"
 #include "gear.h"
+#include "gear_variants.h"
 #include "journal.h"
 #include "display.h"
 
 namespace {
-void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet) {
+void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet, uint8_t variant = 0) {
   const uint8_t *art = nullptr;
   const uint8_t *mask = nullptr;
   int pixelOffsetY = 0;
@@ -32,7 +33,7 @@ void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet
   // Hat/glasses stay rigid while the ear tip twitches independently. All layers
   // use the base's native 2x pixels and the shared body-crouch row mapping.
   if (mask) drawKitsuneSprite(mask, x, y, 0, crouching, COLOR_BACKGROUND, pixelOffsetY);
-  drawKitsuneSprite(art, x, y, 0, crouching, petPalette.gear[static_cast<uint8_t>(equipped)], pixelOffsetY);
+  drawPaletteGearSprite(art, x, y, gearVariantPalette(equipped, variant), patternedGearVariant(equipped, variant), crouching, pixelOffsetY);
 }
 
 } // namespace
@@ -44,10 +45,13 @@ void drawEquippedGear(int x, int y, bool crouching, bool liftedFeet, GearId fore
     GearId gear = getBuddySave().equippedSlots[static_cast<uint8_t>(slot)];
     // Weather supplies its animated accessory above clothing, without duplicates.
     if (gear != foregroundAccessory && gearFitsSlot(gear, slot))
-      drawGearItem(gear, x, y, crouching, liftedFeet);
+      drawGearItem(gear, x, y, crouching, liftedFeet, getBuddySave().equippedVariants[uint8_t(slot)]);
   }
 }
 
 void drawWeatherGear(GearId gear, int x, int y, bool crouching) {
-  drawGearItem(gear, x, y, crouching, false);
+  uint8_t variant = 0; GearSlot slot = gearSlot(gear);
+  if (journalAvailable() && uint8_t(slot) < GEAR_SLOT_COUNT && getBuddySave().equippedSlots[uint8_t(slot)] == gear)
+    variant = getBuddySave().equippedVariants[uint8_t(slot)];
+  drawGearItem(gear, x, y, crouching, false, variant);
 }

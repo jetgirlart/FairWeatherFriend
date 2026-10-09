@@ -49,6 +49,24 @@ class FakeSerial:
 
 
 class BackupTests(unittest.TestCase):
+    def test_field_note_backup_and_expanded_command_limit(self):
+        data = dict(DATA, saveVersion=9, fieldNoteNext=0, fieldNotes=[{
+            "timestamp": 1800000000 - age * 3600, "temperatureMilliC": 22000,
+            "weatherCode": 61, "category": 4, "location": 0, "validMetrics": 31,
+            "metrics": {"humidityCentiPercent": 8100, "windCentiKmh": 2000,
+                        "gustCentiKmh": 4000, "pressureCentiHpa": 101300,
+                        "precipitationCentiMm": 200}, "outcomes": 1, "severeEvents": 0
+        } for age in range(16)], padding="x" * 9000)
+        wire = json.dumps(data, indent=2).encode() + b"\n"
+        self.assertGreater(len(wire), 12288)
+        self.assertEqual(backup.receive_export(FakeSerial(wire, step=128), 1), data)
+        with tempfile.TemporaryDirectory() as directory:
+            file = backup.write_backup(data, Path(directory))
+            command = backup.import_command(file)
+            self.assertGreater(len(command), 12301)
+            self.assertLess(len(command), backup.MAX_COMMAND_BYTES)
+            self.assertEqual(json.loads(command[len(b"IMPORT_BUDDY "):]), data)
+
     def test_ports_exact_fallback_override_ambiguous(self):
         xiao = port("/dev/cu.usbmodem1", 0x2886, 0x8056)
         esp = port("COM7", 0x303A, 0x1001)

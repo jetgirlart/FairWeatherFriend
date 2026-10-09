@@ -10,3 +10,5 @@ const char *gearSlotName(GearSlot slot);
 bool gearFitsSlot(GearId gear, GearSlot slot);
 // NONE removes only the specified slot. Locked or incompatible gear is rejected.
 bool equipGear(GearSlot slot, GearId gear);
+
+bool equipGearVariant(GearSlot slot, GearId gear, uint8_t variant);

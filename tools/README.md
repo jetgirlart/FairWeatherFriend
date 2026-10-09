@@ -99,8 +99,8 @@ screen before typing IMPORT. Export again afterward to verify your restored save
 Local validation rejects malformed/non-object JSON, duplicate keys, non-finite
 numbers and missing/invalid saveVersion/checksum metadata. It does not duplicate
 the firmware's complete schema or recompute its binary-payload checksum. The
-device remains authoritative. Import commands over the firmware's 12301-byte
-line limit (12288 JSON bytes plus `IMPORT_BUDDY `) are rejected locally. Reading a file or staging it never overwrites
+device remains authoritative. Import commands over the firmware's 24589-byte
+line limit (24576 JSON bytes plus `IMPORT_BUDDY `) are rejected locally. Reading a file or staging it never overwrites
 buddy data.
 
 ## Ports and troubleshooting
@@ -180,3 +180,17 @@ flag. Location changes save immediately; explicit device errors preserve old dat
 Version-7 backups include sites, active selection, visit flags/counts and record
 references. Older supported imports migrate with HOME and unknown historical
 record references. Backup/import confirmation behavior remains unchanged.
+
+Version-8 backups additionally carry gear variant unlock masks, equipped colors,
+and the below-freezing observation count. Existing export/import commands and
+explicit confirmations remain unchanged; old supported backups migrate to the
+original/default color for each owned item.
+
+
+Firmware 0.9.0/save version 9 exports the newest 16 **Field Notes** automatically
+with the existing `export` command. `import` carries their readings, location IDs,
+outcomes, severe discovery flags and ring cursor back to firmware for schema and
+checksum validation. No new command or dependency is needed. Update this tool
+alongside firmware: the command bound is now 24589 bytes (24 KiB JSON plus prefix)
+to support the larger history. Older supported backups restore empty history;
+keep a current backup before deliberately restoring an older one.

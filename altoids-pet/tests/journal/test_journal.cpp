@@ -7,6 +7,8 @@
 #include "Preferences.h"
 #include "weather.h"
 SerialType Serial;
+#include "palette.h"
+PetPalette petPalette;
 unsigned long fakeMillis=0;
 #ifndef FWF_NETWORK_TEST
 bool timeValid=true;
@@ -35,6 +37,7 @@ WeatherState mapWeatherCode(int code) {
 #include "../../firmware/altoids_pet/save.cpp"
 #include "../../firmware/altoids_pet/journal.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
+#include "../../firmware/altoids_pet/gear_variants.cpp"
 void blank() { storage.clear();nvsWrites=0;failOpen=failWrite=corruptWrite=false;fakeMillis=0;fakeEpoch=1800000000;timeValid=true;Serial.input.clear();initializeJournal(); }
 void observe(int code=0,int temperature=700,int seconds=3600) {
  fakeEpoch+=seconds;fakeMillis+=seconds*1000;
@@ -67,7 +70,14 @@ void legacyTemperatures(JsonDocument &doc, const BuddySaveData &data) {
  doc.remove("latestTemperatureMilliC");doc.remove("highestTemperatureMilliC");doc.remove("lowestTemperatureMilliC");
  doc.remove("latestMetrics");doc.remove("records");
 }
+void clearVariantHistory(BuddySaveData &s) {
+ s.fieldNoteCount=s.fieldNoteNext=0;for(auto &note:s.fieldNotes)note=FieldNote{};
+ s.freezingObservations=s.totalObservations && s.lowestTemperatureMilliC<0?1:0;
+ for(uint8_t id=1;id<=7;id++)s.unlockedVariants[id-1]=(s.unlockedGear & gearFlag(GearId(id)))?1:0;
+ for(auto &v:s.equippedVariants)v=0;
+}
 void clearLocationHistory(BuddySaveData &s) {
+ clearVariantHistory(s);
  s.fieldSitesVisited=0;s.latestLocation=s.highestTemperatureLocation=s.lowestTemperatureLocation=UNKNOWN_LOCATION;
  for(auto &site:s.locations)site.visited=false;
  for(auto &record:s.records)record.location=UNKNOWN_LOCATION;

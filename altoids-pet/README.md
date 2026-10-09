@@ -229,7 +229,7 @@ an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 1376-byte little-endian payload. Native structs, padding, mood,
+and an explicit 2340-byte little-endian payload (save version 9). Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
@@ -248,7 +248,7 @@ the `SOUND_ENABLED` config default, and the configured latitude/longitude until
 a saved location override exists. Version 2 (168 bytes) and version 1 (148 bytes)
 retain their existing palette/setup and single-item-to-slot migrations, then
 receive these settings defaults. Existing completed buddies never repeat setup.
-The newest valid generation wins across v1/v2/v3/v4/v5/v6/v7 records. Migration queues
+The newest valid generation wins across v1/v2/v3/v4/v5/v6/v7/v8 records. Migration queues
 an alternate-slot checkpoint, retaining the old record as fallback. Failed
 writes leave migration pending. Unknown/newer versions on either key block all
 writes and never reset the buddy.
@@ -552,7 +552,7 @@ python3 -c 'import json,sys; print("IMPORT_BUDDY "+json.dumps(json.load(sys.stdi
 
 `exportBuddy()`, `importBuddy()`, `confirmBuddyImport()`, serialization, and
 validation functions now support the settings UI. Commands use a
-fixed 12301-byte command limit (12288 JSON bytes plus the import prefix) and consume at most 64 received bytes per loop;
+fixed 24589-byte command limit (24576 JSON bytes plus the import prefix) and consume at most 64 received bytes per loop;
 there are no blocking Serial line reads. **Normal 30-second sleep still applies**
 during transfer; complete commands/confirmation promptly or use an already
 button activity to keep the device awake. Serial activity does not change
@@ -1272,3 +1272,225 @@ Physical-device checklist after your own upload with flash erase disabled:
 8. Verify cached same-site wakes keep Wi-Fi off and never poll NWS. Check minute
    updates, flicker-free rendering, buttons, animations, timer, sound and normal
    30-second inactivity sleep/B wake.
+
+## Milestone gear colors (firmware 0.8.0, save version 8)
+
+Gear ownership and color are separate. The seven item IDs and six slots are
+unchanged. Each item has a uint32 unlocked-variant bitmask; bit 0 is ORIGINAL,
+the exact pre-variant tint. Each slot stores its equipped item plus a small
+local variant ID. NONE uses variant 0. No base item is removed or relocked.
+
+Save version 8 appends 60 bytes to v7: seven masks, six variant selections and
+a uint64 freezing-observation count. Payload/envelope sizes are 1436/1460 bytes.
+Versions 1–7 migrate with ORIGINAL unlocked for every owned item and equipped
+items retaining their original tint. All locations, records, severe events/hashes,
+gear ownership, fur, settings and dates survive. Unknown/newer saves stay protected.
+Additional historical milestone colors are evaluated on the next accepted live
+observation, rather than triggering discoveries during migration/import.
+
+There was no historical below-freezing counter. Migration seeds it to 1 only if
+a recorded temperature minimum proves a freezing encounter; otherwise 0. New
+accepted below-freezing observations increment it. Cached wakes and rejected
+observations do not. The yellow boots threshold therefore includes that one
+provable encounter, not a fabricated reconstruction of all historical freezes.
+
+All thresholds are centralized in `gear_variants.cpp`'s `variantRules` table:
+
+| Item | ORIGINAL/base rule (unchanged) | Starter colors |
+|---|---|---|
+| FIELD_CAP | 1 observation | GREEN: 25 total; NAVY: 100 total |
+| SUNGLASSES | 1 clear or mainly-clear observation | BLUE: 25 sunny; RED: 100 sunny |
+| UMBRELLA | 1 rain observation | BLUE: 10 rain; RED: 25 rain; RAINBOW: 50 rain |
+| RAINCOAT | 10 rain observations | BLUE: 25 rain; RED: 50 rain; STORM: 100 rain |
+| WINTER_SCARF | 1 snow observation | BLUE: 10 snow; PATTERNED: 25 snow |
+| WINTER_COAT | 5 snow observations | GREEN: 15 snow; WHITE: 30 snow |
+| BOOTS | 1 observed temperature below 0 C | YELLOW: 10 freezing; WATERPROOF: first Flash Flood Warning |
+
+Sunny totals combine CLEAR and MAINLY_CLEAR, matching the existing sunglasses
+base rule. ORIGINAL keeps the existing tints instead of retroactively recoloring
+an equipped outfit. The other color names map to runtime RGB565 palette entries.
+
+Rare demonstrations use the existing severe-event journal:
+
+- Tornado Warning → RAINCOAT / STORM CHASER.
+- Hurricane Warning → UMBRELLA / SOUWESTER.
+- Blizzard Warning → WINTER_SCARF and WINTER_COAT / BLIZZARD.
+- Extreme Heat Warning → FIELD_CAP and SUNGLASSES / HEAT.
+
+A rare rule requires ownership of its base item. Previously collected events
+remain eligible when that item is later earned. Once unlocked, colors stay
+unlocked; changing a provisional threshold later does not remove saved masks.
+No new items, stat bonuses, weather inference or alert polling are introduced.
+
+Gear UI uses three levels: slot → unlocked item → unlocked color. A cycles the
+choices at the current level; B opens the next level or equips a color; C backs
+out one level. NONE unequips immediately from the item level. Locked colors are
+omitted. The slot list shows equipped item/color, and the color page labels the
+current selection EQUIPPED when it matches the saved outfit. A failed NVS save
+keeps the earlier item/color; no-op equips do not write again.
+
+`gear_variants.h/.cpp` separate rules, stable per-item IDs/names and flash palette
+data from artwork. All original 48×48 one-bit assets and masks are reused; there
+are no color-specific bitmap copies. Current set pixels have the PRIMARY role;
+patterned specials alternate ACCENT in chunky 4×4 source-pixel blocks. The shared
+SpritePalette also has outline/detail colors for future role-based gear artwork.
+Defaults use the existing rendering palette unchanged. The renderer shares the
+pet's source-pixel positioning, crouch mapping and lifted-feet offsets. Layer order
+and weather-accessory duplicate suppression remain unchanged; a matching weather
+accessory uses its equipped variant. Fur palettes are independent.
+
+Variant unlocks are evaluated before the existing normal-observation checkpoint,
+and severe variants before the existing severe-event batch checkpoint. There is
+no extra color-only flash write. Short 2.5-second NEW GEAR COLOR cards are queued
+as bitmasks in RAM and composed by the existing HOME framebuffer scheduler.
+Severe-event cards take priority; menu/setup/focus screens take precedence. Cards
+add no sound or sleep override and are not permanent pending notifications.
+
+Version-8 JSON retains `unlockedGear` and `equippedSlots`, and adds
+`unlockedVariants` keyed by item name, `equippedVariants` keyed by slot, and
+`freezingObservations`. Imports validate supported local IDs/masks, ownership,
+default availability, unlocked equipment, NONE/slot compatibility and the full
+checksum. Older supported backups receive ORIGINAL selections/masks. The desktop
+utility uses its existing backup commands and dependency; the 12288-byte JSON
+limit remains sufficient, including eight sites and all severe-event data.
+
+Host suites (omit the macOS `-isystem` line on Linux):
+
+```sh
+for suite in gear_variants variant_ui; do
+  c++ -std=c++17 \
+    -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+    -Ialtoids-pet/tests/journal_ui/stubs -Ialtoids-pet/tests/journal/stubs \
+    -Ialtoids-pet/firmware/altoids_pet \
+    -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+    altoids-pet/tests/gear_variants/test_${suite}.cpp -o /tmp/fwf-${suite}-tests
+  /tmp/fwf-${suite}-tests
+done
+```
+
+Hardware checklist after your manual upload with flash erase disabled:
+
+1. Export and retain a v7 backup first. Confirm all prior progress and equipped
+   items survive migration and render in their ORIGINAL tint.
+2. Browse slot → item → color with A/B/C. Locked colors must be omitted, C must
+   back out one level, and NONE must remove only the selected slot.
+3. At a natural milestone, verify one brief NEW GEAR COLOR card and the new
+   selectable color. Cached wakes must not award anything or duplicate cards.
+   Host fixtures cover high thresholds and severe events without changing weather
+   or traveling into hazardous conditions.
+4. Equip an unlocked color, sleep/B-wake and unplug/reconnect. Check item/color
+   retention, other slots unchanged, and no flashing during HOME/minute updates.
+5. Check caps/glasses/coats/scarves/boots/umbrella anchoring during blink, look,
+   bounce, sleep, focus and weather reactions. Specials should use chunky accent
+   patterns; matching animated accessories must retain their equipped color.
+6. Export/import v8 with the existing host and B confirmation, then export again
+   and compare masks/selections/freezing count alongside all prior progress.
+   Test cancellation and locked/invalid selections using host fixtures. Keep a
+   newer backup before restoring an older backup, which intentionally restores
+   ORIGINAL colors for that older buddy.
+7. Recheck locations, Journal/Records, cached Wi-Fi/NWS behavior, timer, sound,
+   30-second inactivity sleep and B wake. No driver/pin/animation timing changes
+   are part of this feature.
+
+
+## Recent Field Notes (firmware 0.9.0, save version 9)
+
+Journal now includes **FIELD NOTES** after the severe-weather pages. B opens
+notes newest first; A moves to the next older note, wrapping to newest after the
+oldest. B cycles **summary → atmosphere → outcomes**. C returns to the Field
+Notes entry, then C returns to the menu. Empty history shows a short explanation.
+Summary shows Central local date/time, location, weather, temperature, wind and
+humidity. Atmosphere shows gust, pressure and precipitation. Outcomes shows new
+weather types, temperature/metric records, gear or colors and severe discoveries.
+Missing readings display `--`; US/metric units follow the existing setting.
+
+Only the existing accepted live-observation path appends a note. Cached wakes,
+failed fetches and observations rejected by the existing 60-second guard create
+nothing. The newest 16 accepted observations form a fixed circular buffer;
+number 17 replaces the oldest. No full API payload, NWS description, date string,
+location name or dynamically allocated history is stored. The severe-alert batch
+annotates the matching latest note with newly discovered event IDs and any newly
+unlocked gear color. Repeat encounters do not become new discoveries. This adds
+no fetch, polling, acceptance rule, reward threshold or checkpoint.
+
+Each note uses **56 bytes**, both on the tested host and in the explicitly encoded
+binary payload: timestamp (8), temperature/code/category/location (4 each),
+metric validity plus five values (24), outcome flags (4), and new severe-event
+bitmask (4). Category/location are stable numeric IDs; outcomes use the stable
+`FieldNoteOutcome` bits documented in `save.h`. Ring count and next slot add 8
+bytes. Native struct padding is still never written to NVS.
+
+The save grows by **904 bytes**: payload **1436 → 2340**, with its existing 24-byte
+envelope **1460 → 2364 bytes**. Both alternating blobs total **4728 bytes**,
+excluding NVS's own metadata/page overhead. Fixed binary I/O scratch buffers keep
+large checkpoint arrays off the ESP32 loop stack. Writes remain at the same
+accepted-observation/severe-batch checkpoints, with existing dirty-only retry and
+before-sleep protection; adding a note does not add a flash commit. Read-back
+verification and newest-valid-generation fallback are retained.
+
+Supported versions 1–8 migrate with **empty history** and all their prior fields
+preserved under the existing migrations. No historical observations are invented.
+Version 8 retains journal/records/severe events/locations/gear/color variants/fur/
+settings/research date exactly. Unknown newer saves remain protected. Deleting a
+location clears references in all retained notes to `UNKNOWN` before the slot can
+be reused, matching Records; no historical GPS/location-name snapshots are kept.
+
+JSON exports add `fieldNoteNext` and a newest-first `fieldNotes` array. Each object
+contains `timestamp`, `temperatureMilliC`, `weatherCode`, `category`, `location`,
+`validMetrics`, a named `metrics` object (null when absent), `outcomes`, and
+`severeEvents`. The cursor restores exact ring placement/checksums. Import checks
+capacity, ring shape, strict numeric types/IDs, ordered accepted timestamps,
+metric masks/ranges/nulls, known outcome/event bits, existing visited-location
+references, severe discovery timestamps, and consistency with the latest reading.
+Invalid imports preserve the current buddy; older supported backups import empty
+history. Existing desktop confirmation and device B confirmation remain required.
+
+A 16-note fixture added **6875 bytes** of pretty JSON; fully populated optional
+readings use roughly 7–8 KB for history. A full-metrics/eight-location/full-event
+fixture exported at **15294 bytes**, below the new **24576-byte JSON** bound.
+Firmware/Python command limits agree at **24589 bytes** including `IMPORT_BUDDY `;
+commands and dependencies are unchanged. The bounded serial parser still consumes
+at most 64 bytes per loop. Update the repository's Python utility with firmware.
+
+Host tests:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/journal/stubs -Ialtoids-pet/firmware/altoids_pet \
+  -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+  altoids-pet/tests/field_notes/test_field_notes.cpp -o /tmp/fwf-field-notes
+/tmp/fwf-field-notes
+python3 -m unittest discover -s tools/tests -q
+```
+
+The Field Notes suite covers first insertion, newest-first order, rollover,
+missing/valid optional metrics, guards/cached boots, record/weather/gear/severe
+flags, old/new NVS and JSON, invalid-import preservation, and deleted slot reuse.
+The actual network suite also checks failed/guarded fetches and 100 RTC cache
+wakes without extra notes. Journal UI/layout suites exercise all three note pages,
+text bounds, navigation, unchanged-frame suppression and single-frame updates.
+
+Hardware checklist after your own upload, with flash erase disabled:
+
+1. Keep a v8 backup first. Verify migration retains all buddy progress/settings/
+   equipment and shows empty Field Notes without repeating setup.
+2. Allow a successful live check. Open Journal → Field Notes → B; confirm one
+   note with the correct Central time, active location, category, temperature and
+   units. B must cycle the three pages; missing readings must show `--`.
+3. Sleep and B-wake while the weather cache is valid. The note count/date and
+   lifetime progress must stay unchanged, with Wi-Fi off. A failed fetch and a
+   live check rejected by the duplicate guard must not append anything.
+4. Collect subsequent eligible live checks. A must browse older notes and wrap;
+   after 17 accepted checks, only the newest 16 remain. Confirm record/discovery/
+   gear-color flags agree with the existing progress. Host fixtures cover severe
+   alerts and high thresholds; use naturally occurring sessions on hardware.
+5. Deep-sleep/B-wake, then unplug/reconnect. Notes, ordering, metrics and flags
+   must survive. Verify the normal inactivity timeout and absence of TFT flashes
+   while browsing and returning HOME.
+6. Delete a previously observed location with a valid replacement, then reuse its
+   slot for a different site. Old notes must show UNKNOWN, never the new name.
+7. Export/import a v9 backup using the updated Python tool and existing explicit
+   confirmations. Re-export and compare notes/order/checksum plus prior progress.
+   Canceling or submitting invalid history must preserve the buddy. Restoring an
+   older supported backup intentionally restores its progress with empty history.

@@ -54,3 +54,13 @@ void drawColoredKitsune(const uint8_t *frame, int x, int y, FurPaletteId palette
     if (role > 0 && role <= 4) pixel(x, y, i % 48, i / 48, colors[role], ear, crouch);
   }
 }
+
+void drawPaletteGearSprite(const uint8_t *bitmap, int x, int y, const SpritePalette &palette, bool patterned, bool crouch, int offsetY) {
+  for (int sy = 0; sy < 48; ++sy) for (int sx = 0; sx < 48; ++sx)
+    if (pgm_read_byte(bitmap + sy * 6 + sx / 8) & (0x80 >> (sx % 8))) {
+      // Existing one-bit art is PRIMARY. Special colorways alternate ACCENT in
+      // chunky source-pixel blocks, without extra masks or base-pet copies.
+      uint16_t color = patterned && ((sx / 4 + sy / 4) & 1) ? palette.accent : palette.primary;
+      pixel(x, y, sx, sy, color, 0, crouch, offsetY);
+    }
+}

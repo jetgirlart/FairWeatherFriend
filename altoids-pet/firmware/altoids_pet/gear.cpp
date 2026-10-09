@@ -72,3 +72,5 @@ bool gearFitsSlot(GearId gear, GearSlot slot) {
 bool equipGear(GearSlot slot, GearId gear) {
   return equipJournalGear(slot, gear);
 }
+
+bool equipGearVariant(GearSlot slot, GearId gear, uint8_t variant) { return equipJournalGearVariant(slot, gear, variant); }

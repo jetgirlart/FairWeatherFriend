@@ -11,7 +11,7 @@ import sys
 import time
 
 BAUDRATE = 115200
-MAX_COMMAND_BYTES = 12301  # Firmware's line limit, excluding terminating newline.
+MAX_COMMAND_BYTES = 24589  # Firmware's line limit, excluding terminating newline.
 MAX_RESPONSE_BYTES = 65536
 XIAO_IDS = {(0x2886, 0x0056), (0x2886, 0x8056)}
 
@@ -65,7 +65,7 @@ def import_command(path):
     compact = json.dumps(data, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
     command = ("IMPORT_BUDDY " + compact).encode("utf-8")
     if len(command) > MAX_COMMAND_BYTES:
-        raise BackupError("Import exceeds the firmware's 12301-byte command limit.")
+        raise BackupError("Import exceeds the firmware's 24589-byte command limit.")
     return command
 
 
