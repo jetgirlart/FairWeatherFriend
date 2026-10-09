@@ -27,8 +27,15 @@ int main(){
  formatBuddyTemperature(fahrenheitDeciToMilliC(700),temp,sizeof(temp));assert(std::string(temp)=="21.1 C");
  openJournalScreen(RECORDS_SCREEN);assert(shown("0.0 C"));openJournalScreen(JOURNAL_SCREEN);nextPage();assert(shown("0.0 C"));
  writes=nvsWrites;assert(saveBuddyUnits(UnitsId::METRIC) && nvsWrites==writes);assert(!saveBuddyUnits(static_cast<UnitsId>(2)));
- choose(2);assert(shown("CONFIG LOCATION"));
- sendLine("SET_LOCATION 41.123456 -87.654321");updateSettingsScreen();assert(shown("SAVED LOCATION"));
+ assert(upsertFieldLocation(1,"FIELD CAMP",41,-87));
+ choose(2);assert(shown("ACTIVE: HOME"));
+ auto observations=getBuddySave().totalObservations;auto visited=getBuddySave().fieldSitesVisited;
+ handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);
+ assert(getBuddySave().activeLocation==1 && shown("ACTIVE: FIELD CAMP"));
+ assert(getBuddySave().totalObservations==observations && getBuddySave().fieldSitesVisited==visited);
+ handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);
+ assert(getBuddySave().activeLocation==0);
+ sendLine("SET_LOCATION 41.123456 -87.654321");updateSettingsScreen();assert(shown("ACTIVE: HOME"));
  assert(getBuddySave().latitudeMicrodegrees==41123456 && getBuddySave().longitudeMicrodegrees==-87654321);
  writes=nvsWrites;auto located=getBuddySave();
  for(const char *line:{"SET_LOCATION 91 0","SET_LOCATION 0 -181","SET_LOCATION nan 0","SET_LOCATION inf 2","SET_LOCATION 1 2 junk","SET_LOCATION 1","SET_LOCATION 1    ","SET_LOCATION 1 x"})sendLine(line);
@@ -62,7 +69,7 @@ int main(){
  assert(shown("IMPORT FAILED") && nvsWrites==writes && buddySaveChecksum(current)==buddySaveChecksum(getBuddySave()));failWrite=false;
  sendLine("IMPORT_BUDDY "+compact);updateSettingsScreen();handleSettingsButtons(false,true,false);
  assert(shown("IMPORT COMPLETE") && nvsWrites==writes+1);handleSettingsButtons(false,false,true);assert(currentScreen==HOME);
- choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 6"));
+ choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 7"));
  auto pushes=framePushes;for(unsigned i=0;i<30;i++){fakeMillis+=250;updateSettingsScreen();}assert(framePushes==pushes);
  handleSettingsButtons(false,false,true);handleSettingsButtons(false,false,true);assert(currentScreen==MENU);
  // Explicit import outside the screen is rejected; Serial cannot overwrite.

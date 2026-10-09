@@ -1,4 +1,5 @@
 #include "field_events.h"
+#include "field_locations.h"
 #include "weather.h"
 #include "journal.h"
 #include "weather_observation.h"
@@ -306,10 +307,10 @@ bool parseHourMinute(
 // ==================================================
 
 double configuredLatitude() {
-  const auto &s = getBuddySave(); return s.locationConfigured ? s.latitudeMicrodegrees / 1000000.0 : LATITUDE;
+  const auto &s = getBuddySave(); if (locationExists(s, s.activeLocation)) return s.locations[s.activeLocation].latitudeMicrodegrees / 1000000.0; return s.locationConfigured ? s.latitudeMicrodegrees / 1000000.0 : LATITUDE;
 }
 double configuredLongitude() {
-  const auto &s = getBuddySave(); return s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE;
+  const auto &s = getBuddySave(); if (locationExists(s, s.activeLocation)) return s.locations[s.activeLocation].longitudeMicrodegrees / 1000000.0; return s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE;
 }
 // ==================================================
 // FETCH WEATHER
@@ -405,6 +406,7 @@ bool fetchWeather() {
     Serial.println("Live weather rejected: invalid required temperature/code.");
     return false;
   }
+  observation.location = getBuddySave().activeLocation;
   weatherCode = observation.weatherCode;
   temperatureMilliC = observation.temperatureMilliC;
   temperatureF = round(observation.temperatureMilliC * 9.0 / 5000.0 + 32);

@@ -38,7 +38,7 @@ int main() {
  assert(dirty && getBuddySave().fieldEvents[0].count==0 && getBuddySave().recentAlerts[0].hash==0);
  assert(getBuddySave().totalObservations==old.totalObservations && getBuddySave().furPalette==old.furPalette && getBuddySave().highestTemperatureAt==old.highestTemperatureAt);
  checkpointJournal(true);initializeJournal();assert(!dirty);
- JsonDocument backup;assert(!deserializeJson(backup,json));backup["saveVersion"]=5;backup.remove("fieldEvents");backup.remove("recentAlerts");
+ JsonDocument backup;assert(!deserializeJson(backup,json));backup["saveVersion"]=5;for(JsonPair pair:backup["records"].as<JsonObject>())pair.value().as<JsonObject>().remove("location");backup.remove("fieldEvents");backup.remove("recentAlerts");
  char hash[9];snprintf(hash,9,"%08lx",(unsigned long)v5Checksum(old));backup["checksum"]=hash;
  std::string oldJson;serializeJson(backup,oldJson);assert(deserializeBuddySave(oldJson.c_str(),oldJson.size(),restored,error));assert(restored.fieldEvents[0].count==0);
  for(int scenario=0;scenario<7;++scenario){

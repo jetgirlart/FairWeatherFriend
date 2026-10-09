@@ -195,6 +195,47 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(backup.BackupError):
             backup.send(connection, b"EXPORT_BUDDY")
 
+    def test_location_commands_validation_and_cli(self):
+        cases = [
+            (["locations", "set", "1", "FIELD CAMP", "41.5", "-87.5"], b"UPSERT_LOCATION 1 41.500000 -87.500000 FIELD CAMP\n"),
+            (["locations", "active", "1"], b"ACTIVE_LOCATION 1\n"),
+            (["locations", "delete", "1", "--replacement", "0"], b"DELETE_LOCATION 1 0\n"),
+        ]
+        for args, wire in cases:
+            connection = FakeSerial(b"LOCATION_OK saved\n")
+            status, out, _ = self.run_cli(args, connection)
+            self.assertEqual(status, 0)
+            self.assertEqual(connection.writes, [wire])
+            self.assertIn("Location complete", out)
+            self.assertFalse(connection.is_open)
+        for args in (
+            ["locations", "set", "8", "CAMP", "0", "0"],
+            ["locations", "set", "1", "x" * 16, "0", "0"],
+            ["locations", "set", "1", " NEW", "0", "0"],
+            ["locations", "set", "1", "CAMP\n", "0", "0"],
+            ["locations", "set", "1", "CAMP", "nan", "0"],
+            ["locations", "set", "1", "CAMP", "91", "0"],
+            ["locations", "set", "1", "CAMP", "0", "181"],
+            ["locations", "delete", "1", "--replacement", "1"],
+        ):
+            connection = FakeSerial()
+            status, _, _ = self.run_cli(args, connection)
+            self.assertEqual(status, 1)
+            self.assertIsNone(connection.port)
+            self.assertEqual(connection.writes, [])
+        connection = FakeSerial(b"LOCATION_ERROR active location needs replacement\n")
+        status, _, err = self.run_cli(["locations", "delete", "1"], connection)
+        self.assertEqual(status, 1)
+        self.assertIn("replacement", err)
+        data = {"activeLocation": 1, "fieldSitesVisited": 2, "locations": [
+            {"id": 1, "name": "FIELD CAMP", "latitude": 41.5, "longitude": -87.5, "visited": True}]}
+        connection = FakeSerial(("Clock restored\nLOCATIONS " + json.dumps(data) + "\n").encode())
+        status, out, _ = self.run_cli(["locations", "list"], connection)
+        self.assertEqual(status, 0)
+        self.assertEqual(connection.writes, [b"LIST_LOCATIONS\n"])
+        self.assertIn("* ACTIVE", out)
+        self.assertIn("FIELD SITES VISITED: 2", out)
+
 
 if __name__ == "__main__":
     unittest.main()

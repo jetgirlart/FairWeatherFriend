@@ -1,5 +1,6 @@
 #include "journal_ui.h"
 #include "journal.h"
+#include "field_locations.h"
 #include "gear.h"
 #include "units.h"
 #include <stdio.h>
@@ -90,14 +91,15 @@ void drawJournal() {
       snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.totalObservations));
       centered(50, text, 2);
       snprintf(text, sizeof(text), "DAYS %lu", static_cast<unsigned long>(data.uniqueDaysObserved));
-      textAt(4, 71, text);
+      textAt(4, 69, text);
+      snprintf(text, sizeof(text), "FIELD SITES %llu", (unsigned long long)data.fieldSitesVisited); textAt(4, 78, text);
       unsigned discovered = 0;
       for (uint8_t i = 0; i < WEATHER_CATEGORY_COUNT; ++i) if (data.discoveredWeather & (1UL << i)) ++discovered;
       snprintf(text, sizeof(text), "WEATHER TYPES %u/8", discovered);
-      textAt(4, 80, text);
-      textAt(4, 89, "FIELD RESEARCH BEGAN");
+      textAt(4, 86, text);
+      textAt(4, 94, "FIELD RESEARCH BEGAN");
       formatDate(data.createdAt, text, sizeof(text));
-      textAt(4, 99, text);
+      textAt(4, 102, text);
     } else if (journalPage == 1 || journalPage == 2) {
       textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/10" : "AIR & WIND 3/10");
       if (data.totalObservations == 0) noObservations();
@@ -107,7 +109,8 @@ void drawJournal() {
           centered(39, category < WEATHER_CATEGORY_COUNT ? categoryLabels[category] : "UNKNOWN");
           formatTemperature(data.latestTemperatureMilliC, text, sizeof(text)); centered(51, text, 2);
           latestMetricRow(data, MetricId::HUMIDITY, "HUM", 75);
-          latestMetricRow(data, MetricId::PRECIPITATION, "PRECIP", 90);
+          latestMetricRow(data, MetricId::PRECIPITATION, "PRECIP", 88);
+          centered(99, fieldLocationName(data, data.latestLocation));
         } else {
           latestMetricRow(data, MetricId::WIND, "WIND", 39);
           latestMetricRow(data, MetricId::GUST, "GUST", 57);
@@ -149,11 +152,16 @@ void drawJournal() {
   }
   finishScreen();
 }
+void recordSiteDate(int64_t timestamp, uint8_t location, int y) {
+  char date[24], row[48]; formatDate(timestamp, date, sizeof(date));
+  snprintf(row, sizeof(row), "%s / %s", date, fieldLocationName(getBuddySave(), location));
+  display.setTextSize(1); display.setCursor((TFT_WIDTH - int(strlen(row) * 6)) / 2, y * 2); display.print(row);
+}
 void recordRow(const char *label, const WeatherRecord &record, MetricId metric, int y) {
   char value[32], date[32]; textAt(4, y, label);
   if (record.timestamp == 0) { centered(y + 12, "NOT OBSERVED"); return; }
   formatBuddyMetric(metric, record.value, value, sizeof(value)); centered(y + 9, value);
-  formatDate(record.timestamp, date, sizeof(date)); centered(y + 18, date);
+  recordSiteDate(record.timestamp, record.location, y + 18);
 }
 void drawRecords() {
   beginScreen("RECORDS");
@@ -165,9 +173,9 @@ void drawRecords() {
     else if (recordsPage == 0) {
       char text[32]; centered(34, "HIGHEST");
       formatTemperature(data.highestTemperatureMilliC, text, sizeof(text)); centered(44, text, 2);
-      formatDate(data.highestTemperatureAt, text, sizeof(text)); centered(62, text);
+      recordSiteDate(data.highestTemperatureAt, data.highestTemperatureLocation, 62);
       centered(72, "LOWEST"); formatTemperature(data.lowestTemperatureMilliC, text, sizeof(text)); centered(82, text, 2);
-      formatDate(data.lowestTemperatureAt, text, sizeof(text)); centered(100, text);
+      recordSiteDate(data.lowestTemperatureAt, data.lowestTemperatureLocation, 100);
     } else if (recordsPage == 1) {
       recordRow("STRONGEST WIND", data.records[0], MetricId::WIND, 37);
       recordRow("STRONGEST GUST", data.records[1], MetricId::GUST, 74);

@@ -67,6 +67,11 @@ void legacyTemperatures(JsonDocument &doc, const BuddySaveData &data) {
  doc.remove("latestTemperatureMilliC");doc.remove("highestTemperatureMilliC");doc.remove("lowestTemperatureMilliC");
  doc.remove("latestMetrics");doc.remove("records");
 }
+void clearLocationHistory(BuddySaveData &s) {
+ s.fieldSitesVisited=0;s.latestLocation=s.highestTemperatureLocation=s.lowestTemperatureLocation=UNKNOWN_LOCATION;
+ for(auto &site:s.locations)site.visited=false;
+ for(auto &record:s.records)record.location=UNKNOWN_LOCATION;
+}
 #ifndef FWF_RICH_WEATHER_TEST
 int main() {
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
@@ -149,7 +154,7 @@ int main() {
    storage.clear();storage["fwf-buddy"]["save1"]=record;
    initializeJournal();assert(journalAvailable() && dirty && generation==9);
    auto migrated=getBuddySave();assert(migrated.saveVersion==SAVE_VERSION);
-   auto expected=saved;expected.setupComplete=true;expected.furPalette=FurPaletteId::ORANGE;for(auto &item:expected.equippedSlots)item=GearId::NONE;
+   auto expected=saved;clearLocationHistory(expected);expected.setupComplete=true;expected.furPalette=FurPaletteId::ORANGE;for(auto &item:expected.equippedSlots)item=GearId::NONE;
    if(id)expected.equippedSlots[static_cast<uint8_t>(gearSlot(gear))]=gear;
    assert(buddySaveChecksum(migrated)==buddySaveChecksum(expected));
    failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==record);
@@ -187,7 +192,7 @@ int main() {
  for(auto item:original.equippedSlots)put32(vp,static_cast<uint8_t>(item));
  vp=v2.data()+20;put32(vp,hashBytes(v2.data()+24,168,hashBytes(v2.data(),20)));
  storage.clear();storage["fwf-buddy"]["save1"]=v2;initializeJournal();
- auto v2Expected=original;v2Expected.furPalette=FurPaletteId::ORANGE;v2Expected.setupComplete=true;
+ auto v2Expected=original;clearLocationHistory(v2Expected);v2Expected.furPalette=FurPaletteId::ORANGE;v2Expected.setupComplete=true;
  assert(!buddyNeedsSetup() && dirty && buddySaveChecksum(getBuddySave())==buddySaveChecksum(v2Expected));
  failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==v2);
  failWrite=false;checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
@@ -216,13 +221,13 @@ int main() {
  storage.clear();storage["fwf-buddy"]["save1"]=v3;initializeJournal();
  assert(dirty && !buddyNeedsSetup() && getBuddySave().furPalette==FurPaletteId::BLUE);
  assert(getBuddySave().soundEnabled && getBuddySave().units==UnitsId::US && !getBuddySave().locationConfigured);
- assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(v3Buddy));
+ auto expectedV3=v3Buddy;clearLocationHistory(expectedV3);assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(expectedV3));
  checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
  Print oldV3;assert(serializeBuddySave(v3Buddy,oldV3));assert(!deserializeJson(doc,oldV3.output));doc["saveVersion"]=3;legacyTemperatures(doc,v3Buddy);
  for(const char *key:{"soundEnabled","units","locationConfigured","latitudeMicrodegrees","longitudeMicrodegrees"})doc.remove(key);
  char v3Hash[9];snprintf(v3Hash,9,"%08lx",(unsigned long)hashBytes(full,176));doc["checksum"]=v3Hash;
  bad.clear();serializeJson(doc,bad);assert(deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
- assert(buddySaveChecksum(restored)==buddySaveChecksum(v3Buddy));
+ assert(buddySaveChecksum(restored)==buddySaveChecksum(expectedV3));
  storage=beforeV3Storage;initializeJournal();
  // All palettes roundtrip and preserve all existing buddy fields.
  for(uint8_t id=0;id<5;++id){

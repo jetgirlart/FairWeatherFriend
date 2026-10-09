@@ -1,6 +1,7 @@
 #include "settings_ui.h"
 #include "display.h"
 #include "journal.h"
+#include "field_locations.h"
 #include "weather.h"
 #include "sound.h"
 #include "version.h"
@@ -10,7 +11,7 @@
 namespace settings_detail {
 enum class Page : uint8_t { LIST, SOUND, UNITS, LOCATION, EXPORT, IMPORT, ABOUT };
 Page settingsPage = Page::LIST;
-uint8_t selection = 0;
+uint8_t selection = 0, locationSelection = 0;
 bool draft = false, settingsSaveFailed = false;
 uint32_t settingsChecksum = 0;
 BuddyTransferStatus displayedTransfer = BuddyTransferStatus::NONE;
@@ -45,12 +46,16 @@ void draw() {
     if (settingsSaveFailed) text(192, "SAVE FAILED");
     text(220, "A:NEXT B:SAVE C:BACK", 1);
   } else if (settingsPage == Page::LOCATION) {
-    text(12, "LOCATION", 3); char row[32];
-    snprintf(row, sizeof(row), "LAT %.6f", configuredLatitude()); text(65, row);
-    snprintf(row, sizeof(row), "LON %.6f", configuredLongitude()); text(94, row);
-    text(137, buddy.locationConfigured ? "SAVED LOCATION" : "CONFIG LOCATION");
-    text(171, "UPDATE VIA USB"); text(195, "SET_LOCATION lat lon", 1);
-    text(220, "C:BACK", 1);
+    text(12, "LOCATION", 3); char row[40];
+    snprintf(row, sizeof(row), "ACTIVE: %s", fieldLocationName(buddy, buddy.activeLocation)); text(43, row, 1);
+    for (uint8_t i = 0; i < FIELD_LOCATION_COUNT; ++i) if (buddy.locations[i].used) {
+      int y = 65 + i * 17;
+      snprintf(row, sizeof(row), "%u %s%s", i, buddy.locations[i].name, i == buddy.activeLocation ? " *" : "");
+      if (i == locationSelection) display.drawRect(3, y - 1, 234, 18, COLOR_COOL);
+      text(y, row, 2);
+    }
+    if (settingsSaveFailed) text(203, "SAVE FAILED", 1);
+    text(222, "A:NEXT B:ACTIVE C:BACK", 1);
   } else if (settingsPage == Page::EXPORT || settingsPage == Page::IMPORT) {
     bool importing = settingsPage == Page::IMPORT;
     text(12, importing ? "IMPORT BUDDY" : "EXPORT BUDDY", 2);
@@ -103,11 +108,19 @@ bool handleSettingsButtons(bool a, bool b, bool c) {
   }
   if (a) {
     if (settingsPage == Page::LIST) { selection = (selection + 1) % 6; draw(); }
+    else if (settingsPage == Page::LOCATION) {
+      for (uint8_t step = 1; step <= FIELD_LOCATION_COUNT; ++step) {
+        uint8_t id = (locationSelection + step) % FIELD_LOCATION_COUNT;
+        if (locationExists(getBuddySave(), id)) { locationSelection = id; break; }
+      }
+      settingsSaveFailed = false; draw();
+    }
     else if (settingsPage == Page::SOUND || settingsPage == Page::UNITS) { draft = !draft; settingsSaveFailed = false; draw(); }
   }
   if (b) {
     if (settingsPage == Page::LIST) {
       settingsPage = static_cast<Page>(selection + 1); settingsSaveFailed = false;
+      locationSelection = getBuddySave().activeLocation;
       draft = settingsPage == Page::SOUND ? !getBuddySave().soundEnabled : getBuddySave().units == UnitsId::METRIC;
       if (settingsPage == Page::EXPORT || settingsPage == Page::IMPORT) beginBuddyTransfer(settingsPage == Page::IMPORT);
       draw();
@@ -115,6 +128,8 @@ bool handleSettingsButtons(bool a, bool b, bool c) {
       bool saved = settingsPage == Page::SOUND ? saveBuddySound(!draft) : saveBuddyUnits(draft ? UnitsId::METRIC : UnitsId::US);
       if (saved) { if (!getBuddySave().soundEnabled) stopSound(); back(); }
       else { settingsSaveFailed = true; draw(); }
+    } else if (settingsPage == Page::LOCATION) {
+      settingsSaveFailed = !activateFieldLocation(locationSelection); draw();
     } else if (settingsPage == Page::IMPORT) {
       if (buddyTransferStatus() == BuddyTransferStatus::IMPORT_READY) {
         confirmBuddyImport(pendingBuddyImportChecksum()); draw();
@@ -128,5 +143,8 @@ bool handleSettingsButtons(bool a, bool b, bool c) {
 void updateSettingsScreen() {
   using namespace settings_detail;
   if (currentScreen != SETTINGS_SCREEN) return;
-  if (settingsChecksum != buddySaveChecksum(getBuddySave()) || displayedTransfer != buddyTransferStatus()) draw();
+  if (settingsChecksum != buddySaveChecksum(getBuddySave()) || displayedTransfer != buddyTransferStatus()) {
+    if (!locationExists(getBuddySave(), locationSelection)) locationSelection = getBuddySave().activeLocation;
+    draw();
+  }
 }

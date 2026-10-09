@@ -18,6 +18,8 @@ void soundPetInteraction(){}
 void stopSound(){}
 double configuredLatitude(){return 32;}
 double configuredLongitude(){return -95;}
+extern BuddySaveData buddy;
+bool activateFieldLocation(uint8_t id){if(id>=FIELD_LOCATION_COUNT || !buddy.locations[id].used)return false;buddy.activeLocation=id;return true;}
 bool saveBuddySound(bool){return true;}
 bool saveBuddyUnits(UnitsId){return true;}
 BuddyTransferStatus buddyTransferStatus(){return BuddyTransferStatus::NONE;}
@@ -60,6 +62,8 @@ int main(){
  currentScreen=HOME;queuedEvent=FieldEventId::SEVERE_THUNDERSTORM_WARNING;
  drawHome();snapshot("field-event");assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));
  fakeMillis+=2500;drawHome();
+ for(int i=0;i<8;i++){buddy.locations[i].used=true;strcpy(buddy.locations[i].name,"123456789012345");}
+ buddy.activeLocation=0;buddy.latestLocation=0;buddy.highestTemperatureLocation=0;buddy.lowestTemperatureLocation=1;
  buddy.unlockedGear=0x7f;
  const GearId gear[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
  for(int i=0;i<6;i++)buddy.equippedSlots[i]=gear[i];

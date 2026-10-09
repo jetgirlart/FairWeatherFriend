@@ -99,8 +99,8 @@ screen before typing IMPORT. Export again afterward to verify your restored save
 Local validation rejects malformed/non-object JSON, duplicate keys, non-finite
 numbers and missing/invalid saveVersion/checksum metadata. It does not duplicate
 the firmware's complete schema or recompute its binary-payload checksum. The
-device remains authoritative. Import commands over the firmware's 8205-byte
-line limit (8192 JSON bytes plus `IMPORT_BUDDY `) are rejected locally. Reading a file or staging it never overwrites
+device remains authoritative. Import commands over the firmware's 12301-byte
+line limit (12288 JSON bytes plus `IMPORT_BUDDY `) are rejected locally. Reading a file or staging it never overwrites
 buddy data.
 
 ## Ports and troubleshooting
@@ -145,3 +145,38 @@ against a virtual serial device. No physical device is opened or uploaded to.
 
 Version 6 backups include severe-weather event records and the bounded recent-alert
 fingerprint cache; versions 1–5 remain supported by firmware migration.
+
+
+## Field locations (firmware 0.7.0+)
+
+The same utility manages eight saved sites without recompiling. Wake the buddy
+with B, close Serial Monitor, and keep it awake while issuing commands.
+
+```sh
+python3 tools/fairweather_backup.py locations list
+python3 tools/fairweather_backup.py locations set 1 "FIELD CAMP" 41.5 -87.5
+python3 tools/fairweather_backup.py locations active 1
+python3 tools/fairweather_backup.py locations delete 1 --replacement 0
+```
+
+On Windows use `python` or `py -3` if needed. Add `--port COM5` on Windows,
+`--port /dev/cu.usbmodem123` on macOS, or `--port /dev/ttyACM0` on Linux to any
+location subcommand. Port auto-detection and `--timeout` also work here.
+
+Slots are stable numbers 0–7; `set` adds or updates that exact slot. Names must
+be 1–15 printable ASCII characters with no surrounding spaces (quote multiword
+names). Latitude is -90..90 and longitude -180..180, both finite. A location
+is visited only after an accepted live observation. Selecting it invalidates
+weather/sun caches; the next normal startup/wake performs the live check.
+There is no independent polling, GPS or automatic location history.
+
+Deleting the active site requires `--replacement` naming another occupied slot.
+Deleting a non-active site needs no replacement. Deletion preserves progress and
+record values but clears references to the deleted slot to UNKNOWN, so reusing it
+cannot mislabel old records. The lifetime visited count retains prior visits;
+a reused slot is a new unvisited site. Editing an occupied slot keeps its visited
+flag. Location changes save immediately; explicit device errors preserve old data.
+
+Version-7 backups include sites, active selection, visit flags/counts and record
+references. Older supported imports migrate with HOME and unknown historical
+record references. Backup/import confirmation behavior remains unchanged.

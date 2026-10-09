@@ -2,10 +2,15 @@
 #ifdef ARDUINO
 #include "config.h"
 #endif
+#ifndef LATITUDE
+#define LATITUDE 0.0
+#define LONGITUDE 0.0
+#endif
 #ifndef SOUND_ENABLED
 #define SOUND_ENABLED true
 #endif
 #include "gear.h"
+#include "field_locations.h"
 #include "measurement_units.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
@@ -22,7 +27,8 @@ constexpr size_t V2_PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
 constexpr size_t V3_PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
 constexpr size_t V4_PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
 constexpr size_t V5_PAYLOAD_BYTES = V4_PAYLOAD_BYTES + 24 + 12 * RECORD_COUNT;
-constexpr size_t PAYLOAD_BYTES = V5_PAYLOAD_BYTES + 20 * FIELD_EVENT_COUNT + 16 * RECENT_ALERT_COUNT;
+constexpr size_t V6_PAYLOAD_BYTES = V5_PAYLOAD_BYTES + 20 * FIELD_EVENT_COUNT + 16 * RECENT_ALERT_COUNT;
+constexpr size_t PAYLOAD_BYTES = V6_PAYLOAD_BYTES + 28 * FIELD_LOCATION_COUNT + 48;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 uint64_t generation = 0;
@@ -75,6 +81,20 @@ void encodeEvents(const BuddySaveData &s, uint8_t *p) {
   for (const auto &event : s.fieldEvents) { put32(p, event.count); put64(p, event.firstAt); put64(p, event.latestAt); }
   for (const auto &alert : s.recentAlerts) { put64(p, alert.hash); put64(p, alert.seenAt); }
 }
+void encodeLocations(const BuddySaveData &s, uint8_t *p) {
+  for (const auto &location : s.locations) {
+    put32(p, (location.used ? 1 : 0) | (location.visited ? 2 : 0));
+    memcpy(p, location.name, LOCATION_NAME_BYTES); p += LOCATION_NAME_BYTES;
+    put32(p, location.latitudeMicrodegrees); put32(p, location.longitudeMicrodegrees);
+  }
+  put32(p, s.activeLocation); put64(p, s.fieldSitesVisited);
+  put32(p, s.latestLocation); put32(p, s.highestTemperatureLocation); put32(p, s.lowestTemperatureLocation);
+  for (const auto &record : s.records) put32(p, record.location);
+}
+void migrateHome(BuddySaveData &s) {
+  initializeHomeLocation(s, s.locationConfigured ? s.latitudeMicrodegrees / 1000000.0 : LATITUDE,
+                         s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE);
+}
 // Reconstruct the exact v1 payload for verifying old JSON checksums.
 uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   uint8_t bytes[V1_PAYLOAD_BYTES];
@@ -84,7 +104,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -103,6 +123,11 @@ uint32_t v4Checksum(const BuddySaveData &s) {
 uint32_t v5Checksum(const BuddySaveData &s) {
   uint8_t bytes[V5_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 5;
   encodeCurrent(old, bytes); return hashBytes(bytes, sizeof(bytes));
+}
+uint32_t v6Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V6_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 6;
+  encodeCurrent(old, bytes); encodeEvents(old, bytes + V5_PAYLOAD_BYTES);
+  return hashBytes(bytes, sizeof(bytes));
 }
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
   if (length != payloadSize(version)) return false;
@@ -157,13 +182,27 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
     for (auto &event : s.fieldEvents) { event.count = get32(p); event.firstAt = get64(p); event.latestAt = get64(p); }
     for (auto &alert : s.recentAlerts) { alert.hash = get64(p); alert.seenAt = get64(p); }
   }
+  if (version >= 7) {
+    for (auto &location : s.locations) {
+      uint32_t flags = get32(p); if (flags > 3) return false;
+      location.used = flags & 1; location.visited = flags & 2;
+      memcpy(location.name, p, LOCATION_NAME_BYTES); p += LOCATION_NAME_BYTES;
+      location.latitudeMicrodegrees = int32_t(get32(p)); location.longitudeMicrodegrees = int32_t(get32(p));
+    }
+    auto ref = [&p](uint8_t &id) { uint32_t value = get32(p); if (value != 255 && value >= FIELD_LOCATION_COUNT) return false; id = value; return true; };
+    if (!ref(s.activeLocation)) return false; s.fieldSitesVisited = get64(p);
+    if (!ref(s.latestLocation) || !ref(s.highestTemperatureLocation) || !ref(s.lowestTemperatureLocation)) return false;
+    for (auto &record : s.records) if (!ref(record.location)) return false;
+  }
+  if (!validateBuddySave(s)) return false;
+  if (version < 7) migrateHome(s);
   return validateBuddySave(s);
 }
 // Supported payloads decode explicitly into the current slot model.
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case 4: case 5: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case 5: case 6: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -180,7 +219,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES && length != HEADER_BYTES + V6_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -293,6 +332,26 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  auto validRef = [&s](uint8_t id) { return id == UNKNOWN_LOCATION || (locationExists(s, id) && s.locations[id].visited); };
+  unsigned used = 0, visited = 0;
+  for (const auto &location : s.locations) {
+    if (location.used) {
+      ++used; if (location.visited) ++visited;
+      if (!validLocationName(location.name) || location.latitudeMicrodegrees < -90000000 || location.latitudeMicrodegrees > 90000000 ||
+          location.longitudeMicrodegrees < -180000000 || location.longitudeMicrodegrees > 180000000) return false;
+      // Canonical zero padding prevents hidden/unexported name bytes affecting checksums.
+      for (size_t i = strlen(location.name) + 1; i < LOCATION_NAME_BYTES; ++i) if (location.name[i]) return false;
+    } else {
+      if (location.visited || location.latitudeMicrodegrees || location.longitudeMicrodegrees) return false;
+      for (char c : location.name) if (c) return false;
+    }
+  }
+  if (visited > s.fieldSitesVisited || s.fieldSitesVisited > s.totalObservations ||
+      (used ? !locationExists(s, s.activeLocation) : s.activeLocation != UNKNOWN_LOCATION) ||
+      !validRef(s.latestLocation) || !validRef(s.highestTemperatureLocation) || !validRef(s.lowestTemperatureLocation) ||
+      (!s.totalObservations && (s.latestLocation != UNKNOWN_LOCATION || s.highestTemperatureLocation != UNKNOWN_LOCATION || s.lowestTemperatureLocation != UNKNOWN_LOCATION))) return false;
+  for (const auto &record : s.records) if (!validRef(record.location) || (!record.timestamp && record.location != UNKNOWN_LOCATION)) return false;
+  if (used && s.locationConfigured && (s.latitudeMicrodegrees != s.locations[s.activeLocation].latitudeMicrodegrees || s.longitudeMicrodegrees != s.locations[s.activeLocation].longitudeMicrodegrees)) return false;
   for (const auto &event : s.fieldEvents) {
     if (event.count == 0) { if (event.firstAt != 0 || event.latestAt != 0) return false; }
     else if (s.totalObservations == 0 || event.firstAt <= 0 || event.firstAt < s.createdAt ||
@@ -366,7 +425,7 @@ bool validateBuddySave(const BuddySaveData &s) {
 }
 
 uint32_t buddySaveChecksum(const BuddySaveData &data) {
-  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES);
+  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + V6_PAYLOAD_BYTES);
   return hashBytes(bytes, sizeof(bytes));
 }
 
@@ -410,7 +469,7 @@ bool persistBuddySave(const BuddySaveData &data) {
   uint8_t *p = bytes;
   uint64_t next = generation + 1;
   put32(p, SAVE_MAGIC); put32(p, data.saveVersion); put32(p, PAYLOAD_BYTES); put64(p, next);
-  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES);
+  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + HEADER_BYTES + V6_PAYLOAD_BYTES);
   uint32_t checksum = hashBytes(bytes + HEADER_BYTES, PAYLOAD_BYTES, hashBytes(bytes, 20));
   p = bytes + 20; put32(p, checksum);
   Preferences prefs;
@@ -458,7 +517,7 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   JsonObject records = doc["records"].to<JsonObject>();
   for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
     JsonObject record = records[recordName(static_cast<RecordId>(i))].to<JsonObject>();
-    record["value"] = s.records[i].value; record["timestamp"] = s.records[i].timestamp;
+    record["value"] = s.records[i].value; record["timestamp"] = s.records[i].timestamp; record["location"] = s.records[i].location;
   }
   JsonObject counts = doc["weatherCounts"].to<JsonObject>();
   for (uint8_t i = 0; i < WEATHER_CATEGORY_COUNT; ++i) counts[weatherCategoryName(static_cast<WeatherCategory>(i))] = s.weatherCounts[i];
@@ -479,6 +538,17 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
     char hash[17]; snprintf(hash, sizeof(hash), "%016llx", (unsigned long long)alert.hash);
     a.add(hash); a.add(alert.seenAt);
   }
+  JsonArray locations = doc["fieldLocations"].to<JsonArray>();
+  for (uint8_t i = 0; i < FIELD_LOCATION_COUNT; ++i) {
+    if (!s.locations[i].used) continue;
+    const auto &site = s.locations[i]; JsonObject location = locations.add<JsonObject>();
+    location["id"] = i; location["name"] = site.name;
+    location["latitudeMicrodegrees"] = site.latitudeMicrodegrees; location["longitudeMicrodegrees"] = site.longitudeMicrodegrees;
+    location["visited"] = site.visited;
+  }
+  doc["activeLocation"] = s.activeLocation; doc["fieldSitesVisited"] = s.fieldSitesVisited;
+  doc["latestLocation"] = s.latestLocation;
+  doc["highestTemperatureLocation"] = s.highestTemperatureLocation; doc["lowestTemperatureLocation"] = s.lowestTemperatureLocation;
   char checksum[9]; snprintf(checksum, sizeof(checksum), "%08lx", static_cast<unsigned long>(buddySaveChecksum(s)));
   doc["checksum"] = checksum;
   if (doc.overflowed()) return false;
@@ -487,7 +557,7 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
 
 bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, const char *&error) {
   error = "Invalid JSON";
-  if (!json || length == 0 || length > BUDDY_IMPORT_BYTES) { error = "Import must be 1-8192 bytes"; return false; }
+  if (!json || length == 0 || length > BUDDY_IMPORT_BYTES) { error = "Import must be 1-12288 bytes"; return false; }
   JsonDocument doc;
   if (deserializeJson(doc, json, length, DeserializationOption::NestingLimit(4))) return false;
   if (!doc.is<JsonObject>()) return false;
@@ -581,7 +651,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
     }
     for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
       JsonObjectConst record = records[recordName(static_cast<RecordId>(i))].as<JsonObjectConst>();
-      if (record.isNull() || record.size() != 2 || !record["value"].is<int32_t>() || !record["timestamp"].is<int64_t>()) return false;
+      if (record.isNull() || record.size() != (importedVersion >= 7 ? 3 : 2) || !record["value"].is<int32_t>() || !record["timestamp"].is<int64_t>()) return false;
       s.records[i].value = record["value"].as<int32_t>(); s.records[i].timestamp = record["timestamp"].as<int64_t>();
     }
   }
@@ -609,6 +679,24 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       s.recentAlerts[i++] = {value, a[1].as<int64_t>()};
     }
   }
+  if (importedVersion >= 7) {
+    JsonArrayConst locations = doc["fieldLocations"].as<JsonArrayConst>();
+    if (locations.isNull() || locations.size() > FIELD_LOCATION_COUNT) return false;
+    uint32_t ids = 0;
+    for (JsonObjectConst site : locations) {
+      if (site.size() != 5 || !site["id"].is<uint32_t>() || site["id"].as<uint32_t>() >= FIELD_LOCATION_COUNT ||
+          !site["name"].is<const char *>() || !validLocationName(site["name"].as<const char *>()) ||
+          !site["latitudeMicrodegrees"].is<int32_t>() || !site["longitudeMicrodegrees"].is<int32_t>() || !site["visited"].is<bool>()) return false;
+      uint8_t id = site["id"].as<uint8_t>(); if (ids & (1UL << id)) return false; ids |= 1UL << id;
+      auto &location = s.locations[id]; location.used = true; strcpy(location.name, site["name"]);
+      location.latitudeMicrodegrees = site["latitudeMicrodegrees"].as<int32_t>(); location.longitudeMicrodegrees = site["longitudeMicrodegrees"].as<int32_t>(); location.visited = site["visited"].as<bool>();
+    }
+    auto ref = [](JsonVariantConst value, uint8_t &id) { if (!value.is<uint32_t>() || (value.as<uint32_t>() != 255 && value.as<uint32_t>() >= FIELD_LOCATION_COUNT)) return false; id = value.as<uint8_t>(); return true; };
+    if (!ref(doc["activeLocation"], s.activeLocation) || !ref(doc["latestLocation"], s.latestLocation) ||
+        !ref(doc["highestTemperatureLocation"], s.highestTemperatureLocation) || !ref(doc["lowestTemperatureLocation"], s.lowestTemperatureLocation) || !doc["fieldSitesVisited"].is<uint64_t>()) return false;
+    s.fieldSitesVisited = doc["fieldSitesVisited"].as<uint64_t>();
+    for (uint8_t i = 0; i < RECORD_COUNT; ++i) if (!ref(doc["records"][recordName(RecordId(i))]["location"], s.records[i].location)) return false;
+  }
   if (!validateBuddySave(s)) { error = "Inconsistent journal, records or gear"; return false; }
   const char *text = doc["checksum"].as<const char *>();
   if (!text || strlen(text) != 8) { error = "Missing checksum"; return false; }
@@ -618,7 +706,8 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (importedVersion < 7) migrateHome(s);
   data = s; error = nullptr; return true;
 }
 
@@ -653,3 +742,5 @@ const char *fieldEventName(FieldEventId id) {
   };
   return uint8_t(id) < FIELD_EVENT_COUNT ? names[uint8_t(id)] : "Unknown";
 }
+
+void initializeDefaultFieldLocation(BuddySaveData &data) { migrateHome(data); }

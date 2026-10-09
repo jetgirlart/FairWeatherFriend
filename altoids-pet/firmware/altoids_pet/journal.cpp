@@ -1,5 +1,7 @@
 #include "journal.h"
 #include "gear.h"
+#include "field_locations.h"
+#include <ArduinoJson.h>
 #include "weather.h"
 #include <string.h>
 #include <stdlib.h>
@@ -38,6 +40,22 @@ void processSerialLine() {
     Serial.println("Serial confirmation disabled: press B on IMPORT BUDDY to replace; C cancels.");
   } else if (strcmp(serialLine, "CANCEL_IMPORT") == 0) {
     cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_CANCELED; Serial.println("Import canceled.");
+  } else if (strcmp(serialLine, "LIST_LOCATIONS") == 0) {
+    listFieldLocations(Serial);
+  } else if (strncmp(serialLine, "UPSERT_LOCATION ", 16) == 0) {
+    unsigned id; double latitude, longitude; int consumed = 0;
+    bool valid = sscanf(serialLine + 16, "%u %lf %lf %n", &id, &latitude, &longitude, &consumed) == 3 && consumed > 0 && id < FIELD_LOCATION_COUNT;
+    if (!valid || !upsertFieldLocation(uint8_t(id), serialLine + 16 + consumed, latitude, longitude)) Serial.println("LOCATION_ERROR invalid location or save failed");
+    else Serial.println("LOCATION_OK saved");
+  } else if (strncmp(serialLine, "ACTIVE_LOCATION ", 16) == 0) {
+    unsigned id; char extra;
+    if (sscanf(serialLine + 16, "%u %c", &id, &extra) != 1 || id >= FIELD_LOCATION_COUNT || !activateFieldLocation(uint8_t(id))) Serial.println("LOCATION_ERROR invalid slot or save failed");
+    else Serial.println("LOCATION_OK active");
+  } else if (strncmp(serialLine, "DELETE_LOCATION ", 16) == 0) {
+    unsigned id, replacement = UNKNOWN_LOCATION; char extra;
+    int fields = sscanf(serialLine + 16, "%u %u %c", &id, &replacement, &extra);
+    if ((fields != 1 && fields != 2) || id >= FIELD_LOCATION_COUNT || (fields == 2 && replacement >= FIELD_LOCATION_COUNT) || !deleteFieldLocation(uint8_t(id), uint8_t(replacement))) Serial.println("LOCATION_ERROR invalid slot, active location needs replacement, or save failed");
+    else Serial.println("LOCATION_OK deleted");
   } else if (strncmp(serialLine, "SET_LOCATION ", 13) == 0) {
     const char *start = serialLine + 13; char *end = nullptr;
     double latitude = strtod(start, &end);
@@ -73,6 +91,9 @@ void initializeJournal() {
   SaveLoadResult result = loadBuddySave(buddy);
   available = buddySaveWritable();
   dirty = available && result != SaveLoadResult::LOADED;
+  if (available && buddy.activeLocation == UNKNOWN_LOCATION) {
+    initializeDefaultFieldLocation(buddy); dirty = true;
+  }
   retryPending = false; importPending = false;
   buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
   serialLength = 0; serialOverflow = false; newFieldEvents = 0;
@@ -144,6 +165,11 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   if (date != next.lastObservedDate) ++next.uniqueDaysObserved;
   next.lastObservedDate = date;
   next.latestObservationAt = observation.timestamp;
+  next.latestLocation = locationExists(next, observation.location) ? observation.location : next.activeLocation;
+  if (locationExists(next, next.latestLocation) && !next.locations[next.latestLocation].visited) {
+    next.locations[next.latestLocation].visited = true;
+    if (next.fieldSitesVisited < UINT64_MAX) ++next.fieldSitesVisited;
+  }
   next.latestTemperatureMilliC = observation.temperatureMilliC;
   next.latestWeatherCode = observation.weatherCode;
   next.latestCategory = observation.category;
@@ -151,11 +177,11 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   next.discoveredWeather |= 1UL << category;
   if (first || observation.temperatureMilliC > next.highestTemperatureMilliC) {
     next.highestTemperatureMilliC = observation.temperatureMilliC;
-    next.highestTemperatureAt = observation.timestamp;
+    next.highestTemperatureAt = observation.timestamp; next.highestTemperatureLocation = next.latestLocation;
   }
   if (first || observation.temperatureMilliC < next.lowestTemperatureMilliC) {
     next.lowestTemperatureMilliC = observation.temperatureMilliC;
-    next.lowestTemperatureAt = observation.timestamp;
+    next.lowestTemperatureAt = observation.timestamp; next.lowestTemperatureLocation = next.latestLocation;
   }
   next.latestMetrics = WeatherMetrics{};
   for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
@@ -170,7 +196,7 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
     int32_t value = next.latestMetrics.values[uint8_t(metric)];
     auto &record = next.records[i];
     if (record.timestamp == 0 || (i == uint8_t(RecordId::LOW_PRESSURE) ? value < record.value : value > record.value))
-      record = {value, observation.timestamp};
+      record = {value, observation.timestamp, next.latestLocation};
   }
   evaluateGearUnlocks(next);
   if (!validateBuddySave(next)) { Serial.println("Observation rejected by save validation."); return false; }
@@ -224,7 +250,10 @@ bool confirmBuddyImport(uint32_t checksum) {
     Serial.println("Import NVS commit failed; current runtime buddy preserved.");
     cancelBuddyImport(); transferStatus = BuddyTransferStatus::IMPORT_FAILED; return false;
   }
-  bool locationChanged = buddy.locationConfigured != pendingImport.locationConfigured ||
+  bool activeCoordinatesChanged = locationExists(buddy, buddy.activeLocation) && locationExists(pendingImport, pendingImport.activeLocation) &&
+      (buddy.locations[buddy.activeLocation].latitudeMicrodegrees != pendingImport.locations[pendingImport.activeLocation].latitudeMicrodegrees ||
+       buddy.locations[buddy.activeLocation].longitudeMicrodegrees != pendingImport.locations[pendingImport.activeLocation].longitudeMicrodegrees);
+  bool locationChanged = activeCoordinatesChanged || buddy.activeLocation != pendingImport.activeLocation || buddy.locationConfigured != pendingImport.locationConfigured ||
       buddy.latitudeMicrodegrees != pendingImport.latitudeMicrodegrees || buddy.longitudeMicrodegrees != pendingImport.longitudeMicrodegrees;
   buddy = pendingImport; newFieldEvents = 0; dirty = false; retryPending = false;
   if (locationChanged) invalidateWeatherLocation();
@@ -279,13 +308,63 @@ bool saveBuddyUnits(UnitsId units) {
   BuddySaveData next = buddy; next.units = units; return commitSettings(next);
 }
 bool saveBuddyLocation(double latitude, double longitude) {
-  if (!isfinite(latitude) || !isfinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return false;
-  BuddySaveData next = buddy; next.locationConfigured = true;
-  next.latitudeMicrodegrees = lround(latitude * 1000000); next.longitudeMicrodegrees = lround(longitude * 1000000);
-  bool changed = buddySaveChecksum(next) != buddySaveChecksum(buddy);
+  // Backward-compatible USB command edits the active named site.
+  uint8_t id = buddy.activeLocation;
+  return locationExists(buddy, id) && upsertFieldLocation(id, buddy.locations[id].name, latitude, longitude);
+}
+namespace {
+void mirrorActiveLocation(BuddySaveData &s) {
+  const auto &site = s.locations[s.activeLocation]; s.locationConfigured = true;
+  s.latitudeMicrodegrees = site.latitudeMicrodegrees; s.longitudeMicrodegrees = site.longitudeMicrodegrees;
+}
+}
+bool upsertFieldLocation(uint8_t id, const char *name, double latitude, double longitude) {
+  if (id >= FIELD_LOCATION_COUNT || !validLocationName(name) || !isfinite(latitude) || !isfinite(longitude) ||
+      latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || importPending) return false;
+  BuddySaveData next = buddy; auto &site = next.locations[id];
+  memset(site.name, 0, sizeof(site.name)); strcpy(site.name, name); site.used = true;
+  site.latitudeMicrodegrees = lround(latitude * 1000000); site.longitudeMicrodegrees = lround(longitude * 1000000);
+  if (next.activeLocation == UNKNOWN_LOCATION) next.activeLocation = id;
+  bool coordinatesChanged = next.activeLocation == id &&
+      (!locationExists(buddy, id) || buddy.locations[id].latitudeMicrodegrees != site.latitudeMicrodegrees || buddy.locations[id].longitudeMicrodegrees != site.longitudeMicrodegrees);
+  mirrorActiveLocation(next);
   if (!commitSettings(next)) return false;
-  if (changed) invalidateWeatherLocation();
+  if (coordinatesChanged) invalidateWeatherLocation();
   return true;
+}
+bool activateFieldLocation(uint8_t id) {
+  if (!locationExists(buddy, id) || importPending) return false;
+  if (buddy.activeLocation == id) return true;
+  BuddySaveData next = buddy; next.activeLocation = id; mirrorActiveLocation(next);
+  if (!commitSettings(next)) return false;
+  invalidateWeatherLocation(); return true;
+}
+bool deleteFieldLocation(uint8_t id, uint8_t replacement) {
+  if (!locationExists(buddy, id) || importPending ||
+      (replacement != UNKNOWN_LOCATION && (!locationExists(buddy, replacement) || replacement == id)) ||
+      (buddy.activeLocation == id && replacement == UNKNOWN_LOCATION)) return false;
+  BuddySaveData next = buddy;
+  if (next.activeLocation == id) { next.activeLocation = replacement; mirrorActiveLocation(next); }
+  next.locations[id] = FieldLocation{};
+  // Reusing a slot must never attribute an old record to a newly configured site.
+  for (auto &record : next.records) if (record.location == id) record.location = UNKNOWN_LOCATION;
+  if (next.latestLocation == id) next.latestLocation = UNKNOWN_LOCATION;
+  if (next.highestTemperatureLocation == id) next.highestTemperatureLocation = UNKNOWN_LOCATION;
+  if (next.lowestTemperatureLocation == id) next.lowestTemperatureLocation = UNKNOWN_LOCATION;
+  bool switched = next.activeLocation != buddy.activeLocation;
+  if (!commitSettings(next)) return false;
+  if (switched) invalidateWeatherLocation(); return true;
+}
+void listFieldLocations(Print &output) {
+  if (!available) { output.println("LOCATION_ERROR protected/unavailable save"); return; }
+  JsonDocument doc; doc["activeLocation"] = buddy.activeLocation; doc["fieldSitesVisited"] = buddy.fieldSitesVisited;
+  JsonArray sites = doc["locations"].to<JsonArray>();
+  for (uint8_t i = 0; i < FIELD_LOCATION_COUNT; ++i) if (buddy.locations[i].used) {
+    const auto &site = buddy.locations[i]; JsonObject item = sites.add<JsonObject>();
+    item["id"] = i; item["name"] = site.name; item["latitude"] = site.latitudeMicrodegrees / 1000000.0;
+    item["longitude"] = site.longitudeMicrodegrees / 1000000.0; item["visited"] = site.visited;
+  }
+  output.write(reinterpret_cast<const uint8_t *>("LOCATIONS "), 10); serializeJson(doc, output); output.println();
 }
 BuddyTransferStatus buddyTransferStatus() { return transferStatus; }
 uint32_t pendingBuddyImportChecksum() { return importPending ? buddySaveChecksum(pendingImport) : 0; }

@@ -7,6 +7,7 @@ struct WeatherObservation {
   int32_t weatherCode;
   WeatherCategory category;
   WeatherMetrics metrics;
+  uint8_t location = UNKNOWN_LOCATION;
 };
 
 WeatherCategory observationCategoryForCode(int32_t code);
@@ -50,3 +51,8 @@ bool latestJournalTemperature(int32_t &milliC);
 bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries);
 FieldEventId takeNewFieldEvent();
 bool discoveredFieldEvent(FieldEventId id);
+
+bool upsertFieldLocation(uint8_t id, const char *name, double latitude, double longitude);
+bool activateFieldLocation(uint8_t id);
+bool deleteFieldLocation(uint8_t id, uint8_t replacement = UNKNOWN_LOCATION);
+void listFieldLocations(Print &output);

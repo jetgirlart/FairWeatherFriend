@@ -229,12 +229,12 @@ an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 1104-byte little-endian payload. Native structs, padding, mood,
+and an explicit 1376-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
 
-Version 4 records (196-byte payloads) migrate to v6. Their Fahrenheit
+Version 4 records (196-byte payloads) migrate to v7. Their Fahrenheit
 high/low/latest values convert to thousandths Celsius; original displayed
 Fahrenheit precision and dates are retained. Journal counts, discoveries, gear,
 palette, setup completion, timestamps, sound, units and location survive.
@@ -242,13 +242,13 @@ Added metrics and lifetime records start unset. Versions 1–3 first receive the
 existing defaults/migrations, then the same Celsius conversion. Supported older
 JSON checksums are verified using their original Fahrenheit payload encoding.
 
-Version 3 records (176-byte payloads) migrate to version 6, preserving every
+Version 3 records (176-byte payloads) migrate to version 7, preserving every
 progress field, fur palette and setup flag. New settings default to US units,
 the `SOUND_ENABLED` config default, and the configured latitude/longitude until
 a saved location override exists. Version 2 (168 bytes) and version 1 (148 bytes)
 retain their existing palette/setup and single-item-to-slot migrations, then
 receive these settings defaults. Existing completed buddies never repeat setup.
-The newest valid generation wins across v1/v2/v3/v4/v5/v6 records. Migration queues
+The newest valid generation wins across v1/v2/v3/v4/v5/v6/v7 records. Migration queues
 an alternate-slot checkpoint, retaining the old record as fallback. Failed
 writes leave migration pending. Unknown/newer versions on either key block all
 writes and never reset the buddy.
@@ -397,7 +397,7 @@ are JSON null when unavailable. Metric keys encode their scale/unit; each record
 has `value` and `timestamp`. Import validates types, ranges, presence, record
 bounds, timestamps, paired pressure extrema, existing progress rules and checksum.
 Versions 1–4 remain importable with new metrics/records unset. No RTC cache is
-exported. The desktop backup utility uses the same commands and accepts v6.
+exported. The desktop backup utility uses the same commands and accepts v7.
 
 ## Settings
 
@@ -552,7 +552,7 @@ python3 -c 'import json,sys; print("IMPORT_BUDDY "+json.dumps(json.load(sys.stdi
 
 `exportBuddy()`, `importBuddy()`, `confirmBuddyImport()`, serialization, and
 validation functions now support the settings UI. Commands use a
-fixed 8205-byte command limit (8192 JSON bytes plus the import prefix) and consume at most 64 received bytes per loop;
+fixed 12301-byte command limit (12288 JSON bytes plus the import prefix) and consume at most 64 received bytes per loop;
 there are no blocking Serial line reads. **Normal 30-second sleep still applies**
 during transfer; complete commands/confirmation promptly or use an already
 button activity to keep the device awake. Serial activity does not change
@@ -1146,3 +1146,129 @@ Hardware checks after your own upload, with flash erase disabled:
 8. Recheck minute updates, pet/gear/weather animations, timer completion, sound,
    30-second inactivity sleep and B wake. Focus mode must not be interrupted by
    a queued discovery card.
+
+
+## Field locations / travel (firmware 0.7.0, save format 7)
+
+Eight deliberate owner-configured sites occupy stable slots 0–7. Each stores a
+fixed 16-byte name buffer (1–15 printable ASCII characters, no surrounding spaces),
+signed latitude/longitude in millionths of a degree, and occupied/visited flags.
+Names with spaces are supported. No GPS, geolocation service, automatic location
+tracking or unlimited observation history is used.
+
+SETTINGS → LOCATION lists the saved names, highlights the current selection and
+marks the active site with `*`. A cycles occupied slots, B activates the selection,
+and C returns to Settings. Active changes save immediately, invalidate weather
+and sunrise/sunset caches, and cause the next existing startup/wake sync to fetch
+live weather. They do not fetch immediately, invent an observation, bypass the
+60-second observation guard, or change sleep/wake/Wi-Fi scheduling. A coordinate
+edit on the active site also invalidates caches; a name-only edit does not.
+Weather and the existing supplemental NWS logic both use the active coordinates.
+
+The initial HOME site uses the previous saved override, otherwise `config.h`
+coordinates. Save version 7 appends 272 bytes to v6 (1376-byte payload / 1400-byte
+NVS envelope). Versions 1–6 retain all journal, severe events and hashes, metrics,
+records, gear, palettes, settings and dates. Older records receive UNKNOWN (255)
+location references because their historical sites cannot be established reliably.
+Migration does not mark HOME visited. Unknown/newer saves remain protected.
+The original coordinate fields remain as compatibility fields; location-management
+writes mirror the active site into them. Current location selection uses the slots.
+
+Accepted live observations save one latest site reference and mark that slot
+visited once. New strict temperature/metric records retain the same site's slot;
+equal values preserve the original record/date/site. The Journal summary includes
+the lifetime field-sites-visited count, and Latest Observation shows the observed
+site (which can differ from the newly selected active site). Records show date/site
+on a compact line; unavailable historical references show UNKNOWN.
+
+Deleting an active site requires a valid different replacement in the same command.
+Deletion preserves record values/dates and lifetime totals, clears references to
+that slot to UNKNOWN, and frees the slot. Reusing it cannot relabel old records.
+The lifetime visited count includes previously visited sites that were deleted;
+only occupied slots need visited flags. A reused slot starts unvisited and can add
+a new visit. Updating an existing slot keeps its visited flag: this is an edit to
+a deliberately configured site, not continuous tracking of coordinate changes.
+
+USB commands (newline-terminated, 115200 baud):
+
+```text
+LIST_LOCATIONS
+UPSERT_LOCATION 1 41.500000 -87.500000 FIELD CAMP
+ACTIVE_LOCATION 1
+DELETE_LOCATION 1
+DELETE_LOCATION 1 0
+```
+
+`UPSERT_LOCATION <slot> <latitude> <longitude> <name>` adds or updates that slot.
+Latitude must be finite and within -90..90; longitude within -180..180. Maximum
+capacity is eight occupied slots. `DELETE_LOCATION <slot> [replacement]` requires
+a replacement only when deleting the active site. Responses are `LOCATION_OK ...`
+or `LOCATION_ERROR ...`; listing returns `LOCATIONS <one-line JSON>` with active
+slot, lifetime sites visited, and saved sites including their visited flags.
+The older `SET_LOCATION <lat> <lon>` command still edits the active named site.
+Commands do not keep the buddy awake. Writes use the existing verified NVS commit;
+failures retain runtime state. Repeating a no-op selection/edit avoids flash writes.
+Location edits are rejected while a Buddy import is staged.
+
+Use the existing Python companion, with pyserial as its only dependency:
+
+```sh
+python3 tools/fairweather_backup.py locations list
+python3 tools/fairweather_backup.py locations set 1 "FIELD CAMP" 41.5 -87.5
+python3 tools/fairweather_backup.py locations active 1
+python3 tools/fairweather_backup.py locations delete 1 --replacement 0
+```
+
+Use `python` instead of `python3` on Windows if appropriate. Every location
+subcommand accepts `--port` and `--timeout`, just like backup operations. Set is
+also the update command. The tool validates slot/name/coordinates before opening
+the port and reports the device's verified success or explicit failure.
+
+Version-7 exports include `fieldLocations` (occupied slot IDs/names/coordinates/
+visited flags), `activeLocation`, `fieldSitesVisited`, latest and temperature record
+references, plus `location` in every metric record. Imports validate unique slots,
+capacity, padded names, bounds, flags, active/reference validity, visit consistency
+and the complete checksum. Legacy backups initialize HOME and unknown references.
+The bounded JSON import limit is now 12288 bytes (12301 command bytes including
+`IMPORT_BUDDY `), and the desktop utility matches it. All eight sites plus fully
+populated severe-event data fit within this bound. Import still requires explicit
+host confirmation and on-device B confirmation; no location operation bypasses it.
+
+Additional host suite:
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/journal/stubs -Ialtoids-pet/firmware/altoids_pet \
+  -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+  altoids-pet/tests/locations/test_locations.cpp -o /tmp/fwf-location-tests
+/tmp/fwf-location-tests
+```
+
+Physical-device checklist after your own upload with flash erase disabled:
+
+1. Export/keep a v6 backup. Confirm migration preserves all old progress and
+   settings, creates HOME at the previous coordinates, skips first-run setup,
+   and shows UNKNOWN on historical record locations.
+2. Add sites via Python, including a name with spaces. List them, update an
+   existing slot, fill all eight slots and check invalid slots/names/coordinates
+   are rejected without changing saved progress.
+3. Open SETTINGS → LOCATION. A must cycle only occupied slots, B must mark the
+   selected site active, and C must return. Confirm activation survives unplugging.
+4. Verify selecting a site changes no observation or visit count. Sleep/B-wake
+   after switching; the normal live session must use that site's coordinates,
+   refresh sunrise/sunset, add one accepted observation and mark the site visited.
+   Reopening at the same site must not increment sites visited again.
+5. Check Latest Observation and record site labels, including long names, dates
+   and UNKNOWN. New record improvements retain the observed site; ties retain
+   the original date/site. Host fixtures cover improvements without fake hardware
+   weather settings.
+6. Confirm deleting the active site fails without a replacement. Delete with a
+   replacement, then reuse the freed slot: old records must remain intact with
+   UNKNOWN references and the new site must start unvisited.
+7. Export/import v7, explicitly confirm on the device, then compare all sites,
+   visit flags/counts, record references and existing severe/gear/palette progress.
+   Test import cancellation. Keep the newer backup before testing an old import.
+8. Verify cached same-site wakes keep Wi-Fi off and never poll NWS. Check minute
+   updates, flicker-free rendering, buttons, animations, timer, sound and normal
+   30-second inactivity sleep/B wake.

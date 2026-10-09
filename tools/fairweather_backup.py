@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""USB backup/restore CLI for FairWeather Friend. Python 3 + pyserial only."""
+"""USB backup/restore and field-location CLI for FairWeather Friend. Python 3 + pyserial only."""
 import argparse
 import datetime
 import json
@@ -11,7 +11,7 @@ import sys
 import time
 
 BAUDRATE = 115200
-MAX_COMMAND_BYTES = 8205  # Firmware's line limit, excluding terminating newline.
+MAX_COMMAND_BYTES = 12301  # Firmware's line limit, excluding terminating newline.
 MAX_RESPONSE_BYTES = 65536
 XIAO_IDS = {(0x2886, 0x0056), (0x2886, 0x8056)}
 
@@ -65,7 +65,7 @@ def import_command(path):
     compact = json.dumps(data, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
     command = ("IMPORT_BUDDY " + compact).encode("utf-8")
     if len(command) > MAX_COMMAND_BYTES:
-        raise BackupError("Import exceeds the firmware's 8205-byte command limit.")
+        raise BackupError("Import exceeds the firmware's 12301-byte command limit.")
     return command
 
 
@@ -193,6 +193,55 @@ def perform_import(connection, command, timeout):
             return
 
 
+def location_command(args):
+    action = args.location_action
+    if action == "list":
+        return b"LIST_LOCATIONS"
+    if type(args.slot) is not int or not 0 <= args.slot < 8:
+        raise BackupError("Location slot must be 0–7.")
+    if action == "set":
+        name = args.name
+        if not 1 <= len(name) <= 15 or name != name.strip() or any(ord(c) < 32 or ord(c) > 126 for c in name):
+            raise BackupError("Name must be 1–15 printable ASCII characters, without surrounding spaces.")
+        if not math.isfinite(args.latitude) or not -90 <= args.latitude <= 90:
+            raise BackupError("Latitude must be finite and between -90 and 90.")
+        if not math.isfinite(args.longitude) or not -180 <= args.longitude <= 180:
+            raise BackupError("Longitude must be finite and between -180 and 180.")
+        return f"UPSERT_LOCATION {args.slot} {args.latitude:.6f} {args.longitude:.6f} {name}".encode("ascii")
+    if action == "active":
+        return f"ACTIVE_LOCATION {args.slot}".encode("ascii")
+    replacement = args.replacement
+    if replacement is not None and (not 0 <= replacement < 8 or replacement == args.slot):
+        raise BackupError("Replacement must be a different slot from 0–7.")
+    suffix = "" if replacement is None else f" {replacement}"
+    return f"DELETE_LOCATION {args.slot}{suffix}".encode("ascii")
+
+
+def perform_location(connection, command, timeout):
+    send(connection, command)
+    for line in read_lines(connection, timeout):
+        device_error(line)
+        if line.startswith("LOCATION_ERROR"):
+            raise BackupError("Device: " + line)
+        if command == b"LIST_LOCATIONS" and line.startswith("LOCATIONS "):
+            try:
+                data = json.loads(line[10:], parse_constant=reject_constant, object_pairs_hook=unique_keys)
+                sites = data["locations"]
+                if not isinstance(sites, list) or len(sites) > 8:
+                    raise ValueError("invalid location list")
+                print(f"FIELD SITES VISITED: {data['fieldSitesVisited']}")
+                for site in sites:
+                    marker = " * ACTIVE" if site["id"] == data["activeLocation"] else ""
+                    visited = "visited" if site["visited"] else "not visited"
+                    print(f"{site['id']}: {site['name']} ({site['latitude']:.6f}, {site['longitude']:.6f}) — {visited}{marker}")
+            except (ValueError, KeyError, TypeError) as exc:
+                raise BackupError("Invalid location response.") from exc
+            return
+        if command != b"LIST_LOCATIONS" and line.startswith("LOCATION_OK "):
+            print("Location complete: " + line[12:] + ".")
+            return
+
+
 def positive_timeout(text):
     value = float(text)
     if not math.isfinite(value) or value <= 0:
@@ -204,6 +253,18 @@ def parser():
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="action", required=True)
     commands.add_parser("list-ports", help="show available serial ports")
+    locations = commands.add_parser("locations", help="manage deliberately configured field sites")
+    sub = locations.add_subparsers(dest="location_action", required=True)
+    for action in ("list", "set", "delete", "active"):
+        item = sub.add_parser(action)
+        item.add_argument("--port", help="serial port override")
+        item.add_argument("--timeout", type=positive_timeout, default=20)
+        if action != "list": item.add_argument("slot", type=int, help="stable slot 0–7")
+        if action == "set":
+            item.add_argument("name", help="1–15 printable ASCII characters; quote spaces")
+            item.add_argument("latitude", type=float)
+            item.add_argument("longitude", type=float)
+        if action == "delete": item.add_argument("--replacement", type=int, help="activate this other slot when deleting the active site")
     for name in ("export", "import"):
         command = commands.add_parser(name)
         command.add_argument("--port", help="serial port override, e.g. /dev/cu.usbmodem123 or COM5")
@@ -224,7 +285,7 @@ def main(argv=None):
     import_sent = False
     try:
         # Local validation happens before opening a port or prompting to send.
-        command = import_command(args.file) if restoring else None
+        command = import_command(args.file) if restoring else location_command(args) if args.action == "locations" else None
         try:
             import serial
             from serial.tools import list_ports
@@ -248,7 +309,9 @@ def main(argv=None):
         connection.rts = False
         connection.port = selected
         connection.open()
-        if restoring:
+        if args.action == "locations":
+            perform_location(connection, command, args.timeout)
+        elif restoring:
             print("On the buddy, open SETTINGS > IMPORT BUDDY before continuing.", flush=True)
             answer = input(f"This will REPLACE the current buddy with {args.file}. Type IMPORT to send: ")
             if answer != "IMPORT":
