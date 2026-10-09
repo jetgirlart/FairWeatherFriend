@@ -6,6 +6,7 @@
 #define SOUND_ENABLED true
 #endif
 #include "gear.h"
+#include "measurement_units.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <stddef.h>
@@ -19,7 +20,8 @@ constexpr size_t V1_PAYLOAD_BYTES = 148;
 constexpr size_t COMMON_PAYLOAD_BYTES = 144;
 constexpr size_t V2_PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
 constexpr size_t V3_PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
-constexpr size_t PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
+constexpr size_t V4_PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
+constexpr size_t PAYLOAD_BYTES = V4_PAYLOAD_BYTES + 24 + 12 * RECORD_COUNT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 uint64_t generation = 0;
@@ -48,10 +50,10 @@ uint64_t get64(const uint8_t *&p) {
 void encodeCommon(const BuddySaveData &s, uint8_t *p) {
   put32(p, s.saveVersion); put64(p, s.createdAt); put64(p, s.totalObservations);
   put32(p, s.uniqueDaysObserved); put64(p, s.latestObservationAt); put32(p, s.lastObservedDate);
-  put32(p, s.latestTemperatureDeciF); put32(p, s.latestWeatherCode);
+  put32(p, s.saveVersion < 5 && s.totalObservations ? milliCToFahrenheitDeci(s.latestTemperatureMilliC) : s.latestTemperatureMilliC); put32(p, s.latestWeatherCode);
   put32(p, static_cast<uint8_t>(s.latestCategory));
-  put32(p, s.highestTemperatureDeciF); put64(p, s.highestTemperatureAt);
-  put32(p, s.lowestTemperatureDeciF); put64(p, s.lowestTemperatureAt);
+  put32(p, s.saveVersion < 5 && s.totalObservations ? milliCToFahrenheitDeci(s.highestTemperatureMilliC) : s.highestTemperatureMilliC); put64(p, s.highestTemperatureAt);
+  put32(p, s.saveVersion < 5 && s.totalObservations ? milliCToFahrenheitDeci(s.lowestTemperatureMilliC) : s.lowestTemperatureMilliC); put64(p, s.lowestTemperatureAt);
   for (uint64_t count : s.weatherCounts) put64(p, count);
   put32(p, s.discoveredWeather); put32(p, s.unlockedGear);
 }
@@ -63,6 +65,9 @@ void encodeCurrent(const BuddySaveData &s, uint8_t *p) {
   put32(p, s.soundEnabled ? 1 : 0); put32(p, static_cast<uint8_t>(s.units));
   put32(p, s.locationConfigured ? 1 : 0);
   put32(p, s.latitudeMicrodegrees); put32(p, s.longitudeMicrodegrees);
+  put32(p, s.latestMetrics.validMask);
+  for (int32_t value : s.latestMetrics.values) put32(p, value);
+  for (const auto &record : s.records) { put32(p, record.value); put64(p, record.timestamp); }
 }
 // Reconstruct the exact v1 payload for verifying old JSON checksums.
 uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
@@ -73,7 +78,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -85,17 +90,21 @@ uint32_t v3Checksum(const BuddySaveData &s) {
   uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 3;
   encodeCurrent(old, bytes); return hashBytes(bytes, V3_PAYLOAD_BYTES);
 }
+uint32_t v4Checksum(const BuddySaveData &s) {
+  uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 4;
+  encodeCurrent(old, bytes); return hashBytes(bytes, V4_PAYLOAD_BYTES);
+}
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
   if (length != payloadSize(version)) return false;
   s = BuddySaveData{}; s.soundEnabled = SOUND_ENABLED;
   if (get32(p) != version) return false; s.createdAt = get64(p); s.totalObservations = get64(p);
   s.uniqueDaysObserved = get32(p); s.latestObservationAt = get64(p); s.lastObservedDate = get32(p);
-  s.latestTemperatureDeciF = int32_t(get32(p)); s.latestWeatherCode = int32_t(get32(p));
+  s.latestTemperatureMilliC = int32_t(get32(p)); s.latestWeatherCode = int32_t(get32(p));
   uint32_t category = get32(p);
   if (category >= WEATHER_CATEGORY_COUNT && category != 255) return false;
   s.latestCategory = static_cast<WeatherCategory>(category);
-  s.highestTemperatureDeciF = int32_t(get32(p)); s.highestTemperatureAt = get64(p);
-  s.lowestTemperatureDeciF = int32_t(get32(p)); s.lowestTemperatureAt = get64(p);
+  s.highestTemperatureMilliC = int32_t(get32(p)); s.highestTemperatureAt = get64(p);
+  s.lowestTemperatureMilliC = int32_t(get32(p)); s.lowestTemperatureAt = get64(p);
   for (uint64_t &count : s.weatherCounts) count = get64(p);
   s.discoveredWeather = get32(p); s.unlockedGear = get32(p);
   if (version == 1) {
@@ -122,13 +131,25 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
     s.locationConfigured = configured == 1;
     s.latitudeMicrodegrees = int32_t(get32(p)); s.longitudeMicrodegrees = int32_t(get32(p));
   }
+  if (version < 5 && s.totalObservations) {
+    if (s.lowestTemperatureMilliC < -2000 || s.highestTemperatureMilliC > 2000 ||
+        s.latestTemperatureMilliC < s.lowestTemperatureMilliC || s.latestTemperatureMilliC > s.highestTemperatureMilliC) return false;
+    s.latestTemperatureMilliC = fahrenheitDeciToMilliC(s.latestTemperatureMilliC);
+    s.highestTemperatureMilliC = fahrenheitDeciToMilliC(s.highestTemperatureMilliC);
+    s.lowestTemperatureMilliC = fahrenheitDeciToMilliC(s.lowestTemperatureMilliC);
+  }
+  if (version >= 5) {
+    s.latestMetrics.validMask = get32(p);
+    for (auto &value : s.latestMetrics.values) value = int32_t(get32(p));
+    for (auto &record : s.records) { record.value = int32_t(get32(p)); record.timestamp = get64(p); }
+  }
   return validateBuddySave(s);
 }
 // Supported payloads decode explicitly into the current slot model.
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -145,7 +166,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -258,6 +279,28 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  if (s.latestMetrics.validMask & ~31UL) return false;
+  for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+    bool present = s.latestMetrics.has(static_cast<MetricId>(i));
+    if ((present && (s.totalObservations == 0 || !validMetric(static_cast<MetricId>(i), s.latestMetrics.values[i]))) ||
+        (!present && s.latestMetrics.values[i] != 0)) return false;
+  }
+  for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
+    const auto &record = s.records[i]; MetricId metric = recordMetric(static_cast<RecordId>(i));
+    if (record.timestamp == 0) {
+      if (record.value != 0 || s.latestMetrics.has(metric)) return false;
+    } else {
+      if (record.timestamp < s.createdAt || record.timestamp > s.latestObservationAt ||
+          !validMetric(metric, record.value)) return false;
+      if (s.latestMetrics.has(metric)) {
+        int32_t latest = s.latestMetrics.values[uint8_t(metric)];
+        if (i == uint8_t(RecordId::LOW_PRESSURE) ? record.value > latest : record.value < latest) return false;
+      }
+    }
+  }
+  const auto &lowPressure = s.records[uint8_t(RecordId::LOW_PRESSURE)];
+  const auto &highPressure = s.records[uint8_t(RecordId::HIGH_PRESSURE)];
+  if ((lowPressure.timestamp == 0) != (highPressure.timestamp == 0) || lowPressure.value > highPressure.value) return false;
   if (static_cast<uint8_t>(s.units) > 1 || s.latitudeMicrodegrees < -90000000 || s.latitudeMicrodegrees > 90000000 ||
       s.longitudeMicrodegrees < -180000000 || s.longitudeMicrodegrees > 180000000 ||
       (!s.locationConfigured && (s.latitudeMicrodegrees != 0 || s.longitudeMicrodegrees != 0))) return false;
@@ -282,7 +325,7 @@ bool validateBuddySave(const BuddySaveData &s) {
   if (total == 0) {
     return s.uniqueDaysObserved == 0 && s.latestObservationAt == 0 && s.lastObservedDate == 0 &&
            s.latestCategory == WeatherCategory::UNKNOWN && s.latestWeatherCode == -1 &&
-           s.latestTemperatureDeciF == 0 && s.highestTemperatureDeciF == 0 && s.lowestTemperatureDeciF == 0 &&
+           s.latestTemperatureMilliC == 0 && s.highestTemperatureMilliC == 0 && s.lowestTemperatureMilliC == 0 &&
            s.highestTemperatureAt == 0 && s.lowestTemperatureAt == 0;
   }
   uint8_t category = static_cast<uint8_t>(s.latestCategory);
@@ -291,8 +334,8 @@ bool validateBuddySave(const BuddySaveData &s) {
          category < WEATHER_CATEGORY_COUNT && s.weatherCounts[category] > 0 &&
          s.latestWeatherCode >= 0 && s.highestTemperatureAt >= s.createdAt && s.lowestTemperatureAt >= s.createdAt &&
          s.highestTemperatureAt <= s.latestObservationAt && s.lowestTemperatureAt <= s.latestObservationAt &&
-         s.lowestTemperatureDeciF >= -2000 && s.highestTemperatureDeciF <= 2000 &&
-         s.lowestTemperatureDeciF <= s.latestTemperatureDeciF && s.latestTemperatureDeciF <= s.highestTemperatureDeciF;
+         s.lowestTemperatureMilliC >= -130000 && s.highestTemperatureMilliC <= 100000 &&
+         s.lowestTemperatureMilliC <= s.latestTemperatureMilliC && s.latestTemperatureMilliC <= s.highestTemperatureMilliC;
 }
 
 uint32_t buddySaveChecksum(const BuddySaveData &data) {
@@ -372,13 +415,24 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   doc["uniqueDaysObserved"] = s.uniqueDaysObserved;
   doc["latestObservationAt"] = s.latestObservationAt;
   doc["lastObservedDate"] = s.lastObservedDate;
-  doc["latestTemperatureDeciF"] = s.latestTemperatureDeciF;
+  doc["latestTemperatureMilliC"] = s.latestTemperatureMilliC;
   doc["latestWeatherCode"] = s.latestWeatherCode;
   doc["latestCategory"] = static_cast<uint8_t>(s.latestCategory);
-  doc["highestTemperatureDeciF"] = s.highestTemperatureDeciF;
+  doc["highestTemperatureMilliC"] = s.highestTemperatureMilliC;
   doc["highestTemperatureAt"] = s.highestTemperatureAt;
-  doc["lowestTemperatureDeciF"] = s.lowestTemperatureDeciF;
+  doc["lowestTemperatureMilliC"] = s.lowestTemperatureMilliC;
   doc["lowestTemperatureAt"] = s.lowestTemperatureAt;
+  JsonObject latest = doc["latestMetrics"].to<JsonObject>();
+  for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+    const char *key = metricName(static_cast<MetricId>(i));
+    if (s.latestMetrics.has(static_cast<MetricId>(i))) latest[key] = s.latestMetrics.values[i];
+    else latest[key] = nullptr;
+  }
+  JsonObject records = doc["records"].to<JsonObject>();
+  for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
+    JsonObject record = records[recordName(static_cast<RecordId>(i))].to<JsonObject>();
+    record["value"] = s.records[i].value; record["timestamp"] = s.records[i].timestamp;
+  }
   JsonObject counts = doc["weatherCounts"].to<JsonObject>();
   for (uint8_t i = 0; i < WEATHER_CATEGORY_COUNT; ++i) counts[weatherCategoryName(static_cast<WeatherCategory>(i))] = s.weatherCounts[i];
   doc["discoveredWeather"] = s.discoveredWeather;
@@ -427,11 +481,14 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
   READ_FIELD("uniqueDaysObserved", uniqueDaysObserved, uint32_t)
   READ_FIELD("latestObservationAt", latestObservationAt, int64_t)
   READ_FIELD("lastObservedDate", lastObservedDate, uint32_t)
-  READ_FIELD("latestTemperatureDeciF", latestTemperatureDeciF, int32_t)
+  if (importedVersion < 5) { READ_FIELD("latestTemperatureDeciF", latestTemperatureMilliC, int32_t) }
+  else { READ_FIELD("latestTemperatureMilliC", latestTemperatureMilliC, int32_t) }
   READ_FIELD("latestWeatherCode", latestWeatherCode, int32_t)
-  READ_FIELD("highestTemperatureDeciF", highestTemperatureDeciF, int32_t)
+  if (importedVersion < 5) { READ_FIELD("highestTemperatureDeciF", highestTemperatureMilliC, int32_t) }
+  else { READ_FIELD("highestTemperatureMilliC", highestTemperatureMilliC, int32_t) }
   READ_FIELD("highestTemperatureAt", highestTemperatureAt, int64_t)
-  READ_FIELD("lowestTemperatureDeciF", lowestTemperatureDeciF, int32_t)
+  if (importedVersion < 5) { READ_FIELD("lowestTemperatureDeciF", lowestTemperatureMilliC, int32_t) }
+  else { READ_FIELD("lowestTemperatureMilliC", lowestTemperatureMilliC, int32_t) }
   READ_FIELD("lowestTemperatureAt", lowestTemperatureAt, int64_t)
   READ_FIELD("discoveredWeather", discoveredWeather, uint32_t)
   READ_FIELD("unlockedGear", unlockedGear, uint32_t)
@@ -461,6 +518,34 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
     if (!value.is<uint64_t>()) { error = "Invalid weather count"; return false; }
     s.weatherCounts[i] = value.as<uint64_t>();
   }
+  if (importedVersion < 5 && s.totalObservations) {
+    if (s.lowestTemperatureMilliC < -2000 || s.highestTemperatureMilliC > 2000 ||
+        s.latestTemperatureMilliC < s.lowestTemperatureMilliC || s.latestTemperatureMilliC > s.highestTemperatureMilliC) return false;
+    s.latestTemperatureMilliC = fahrenheitDeciToMilliC(s.latestTemperatureMilliC);
+    s.highestTemperatureMilliC = fahrenheitDeciToMilliC(s.highestTemperatureMilliC);
+    s.lowestTemperatureMilliC = fahrenheitDeciToMilliC(s.lowestTemperatureMilliC);
+  }
+  if (importedVersion >= 5) {
+    JsonObjectConst latest = doc["latestMetrics"].as<JsonObjectConst>();
+    JsonObjectConst records = doc["records"].as<JsonObjectConst>();
+    if (latest.isNull() || latest.size() != METRIC_COUNT || records.isNull() || records.size() != RECORD_COUNT) {
+      error = "Missing metric/record fields"; return false;
+    }
+    for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+      const char *key = metricName(static_cast<MetricId>(i));
+      if (latest[key].isUnbound()) return false;
+      auto value = latest[key];
+      if (!value.isNull()) {
+        if (!value.is<int32_t>()) return false;
+        s.latestMetrics.validMask |= 1UL << i; s.latestMetrics.values[i] = value.as<int32_t>();
+      }
+    }
+    for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
+      JsonObjectConst record = records[recordName(static_cast<RecordId>(i))].as<JsonObjectConst>();
+      if (record.isNull() || record.size() != 2 || !record["value"].is<int32_t>() || !record["timestamp"].is<int64_t>()) return false;
+      s.records[i].value = record["value"].as<int32_t>(); s.records[i].timestamp = record["timestamp"].as<int64_t>();
+    }
+  }
   if (!validateBuddySave(s)) { error = "Inconsistent journal, records or gear"; return false; }
   const char *text = doc["checksum"].as<const char *>();
   if (!text || strlen(text) != 8) { error = "Missing checksum"; return false; }
@@ -470,6 +555,28 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   data = s; error = nullptr; return true;
+}
+
+const char *metricName(MetricId id) {
+  const char *names[] = {"humidityCentiPercent", "windCentiKmh", "gustCentiKmh", "pressureCentiHpa", "precipitationCentiMm"};
+  return uint8_t(id) < METRIC_COUNT ? names[uint8_t(id)] : "unknown";
+}
+const char *recordName(RecordId id) {
+  const char *names[] = {"strongestWind", "strongestGust", "highestHumidity", "lowestPressure", "highestPressure", "wettestObservation"};
+  return uint8_t(id) < RECORD_COUNT ? names[uint8_t(id)] : "unknown";
+}
+MetricId recordMetric(RecordId id) {
+  const MetricId metrics[] = {MetricId::WIND, MetricId::GUST, MetricId::HUMIDITY, MetricId::PRESSURE, MetricId::PRESSURE, MetricId::PRECIPITATION};
+  return uint8_t(id) < RECORD_COUNT ? metrics[uint8_t(id)] : MetricId::COUNT;
+}
+bool validMetric(MetricId id, int32_t value) {
+  switch (id) {
+    case MetricId::HUMIDITY: return value >= 0 && value <= 10000;
+    case MetricId::WIND: case MetricId::GUST: return value >= 0 && value <= 50000;
+    case MetricId::PRESSURE: return value >= 10000 && value <= 120000;
+    case MetricId::PRECIPITATION: return value >= 0 && value <= 100000;
+    default: return false;
+  }
 }

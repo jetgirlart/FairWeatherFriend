@@ -12,7 +12,7 @@ void choose(unsigned index){openSettings();for(unsigned i=0;i<index;i++)handleSe
 int main(){
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  initializeJournal();checkpointJournal();assert(confirmBuddySetup(FurPaletteId::BROWN));
- assert(recordWeatherObservation({fakeEpoch,320,0,WeatherCategory::CLEAR}));
+ assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(320),0,WeatherCategory::CLEAR}));
  auto original=getBuddySave();unsigned writes=nvsWrites;
  choose(0);assert(shown("SOUND") && shown("ON"));handleSettingsButtons(true,false,false);handleSettingsButtons(false,false,true);
  assert(getBuddySave().soundEnabled && nvsWrites==writes);
@@ -21,10 +21,10 @@ int main(){
  assert(!getBuddySave().soundEnabled && silenceCalls==1 && nvsWrites==writes+1);
  initializeJournal();assert(!getBuddySave().soundEnabled && getBuddySave().furPalette==FurPaletteId::BROWN);
  choose(1);handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);
- assert(getBuddySave().units==UnitsId::METRIC && getBuddySave().highestTemperatureDeciF==320);
- char temp[32];formatBuddyTemperature(320,temp,sizeof(temp));assert(std::string(temp)=="0.0 C");
- formatBuddyTemperature(-400,temp,sizeof(temp));assert(std::string(temp)=="-40.0 C");
- formatBuddyTemperature(700,temp,sizeof(temp));assert(std::string(temp)=="21.1 C");
+ assert(getBuddySave().units==UnitsId::METRIC && getBuddySave().highestTemperatureMilliC==fahrenheitDeciToMilliC(320));
+ char temp[32];formatBuddyTemperature(fahrenheitDeciToMilliC(320),temp,sizeof(temp));assert(std::string(temp)=="0.0 C");
+ formatBuddyTemperature(fahrenheitDeciToMilliC(-400),temp,sizeof(temp));assert(std::string(temp)=="-40.0 C");
+ formatBuddyTemperature(fahrenheitDeciToMilliC(700),temp,sizeof(temp));assert(std::string(temp)=="21.1 C");
  openJournalScreen(RECORDS_SCREEN);assert(shown("0.0 C"));openJournalScreen(JOURNAL_SCREEN);nextPage();assert(shown("0.0 C"));
  writes=nvsWrites;assert(saveBuddyUnits(UnitsId::METRIC) && nvsWrites==writes);assert(!saveBuddyUnits(static_cast<UnitsId>(2)));
  choose(2);assert(shown("CONFIG LOCATION"));
@@ -62,7 +62,7 @@ int main(){
  assert(shown("IMPORT FAILED") && nvsWrites==writes && buddySaveChecksum(current)==buddySaveChecksum(getBuddySave()));failWrite=false;
  sendLine("IMPORT_BUDDY "+compact);updateSettingsScreen();handleSettingsButtons(false,true,false);
  assert(shown("IMPORT COMPLETE") && nvsWrites==writes+1);handleSettingsButtons(false,false,true);assert(currentScreen==HOME);
- choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 4"));
+ choose(5);assert(shown("XIAO ESP32-S3") && shown("ST7789 240x240") && shown("SAVE FORMAT 5"));
  auto pushes=framePushes;for(unsigned i=0;i<30;i++){fakeMillis+=250;updateSettingsScreen();}assert(framePushes==pushes);
  handleSettingsButtons(false,false,true);handleSettingsButtons(false,false,true);assert(currentScreen==MENU);
  // Explicit import outside the screen is rejected; Serial cannot overwrite.

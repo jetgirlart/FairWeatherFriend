@@ -10,7 +10,9 @@ SerialType Serial;
 unsigned long fakeMillis=0;
 bool timeValid=true;
 unsigned invalidations=0;
+#ifndef FWF_RICH_WEATHER_TEST
 void invalidateWeatherLocation(){invalidations++;}
+#endif
 time_t fakeEpoch=1800000000;
 extern "C" time_t time(time_t *p) { if(p)*p=fakeEpoch; return fakeEpoch; }
 std::map<std::string,Entries> storage;
@@ -32,7 +34,7 @@ WeatherState mapWeatherCode(int code) {
 void blank() { storage.clear();nvsWrites=0;failOpen=failWrite=corruptWrite=false;fakeMillis=0;fakeEpoch=1800000000;timeValid=true;Serial.input.clear();initializeJournal(); }
 void observe(int code=0,int temperature=700,int seconds=3600) {
  fakeEpoch+=seconds;fakeMillis+=seconds*1000;
- assert(recordWeatherObservation({fakeEpoch,temperature,code,observationCategoryForCode(code)}));
+ assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(temperature),code,observationCategoryForCode(code)}));
 }
 std::string exported() { Print p;assert(exportBuddy(p));return p.output; }
 void send(const std::string &line) { for(char c:line)Serial.input.push_back(c);Serial.input.push_back('\n');while(Serial.available())updateBuddySerial(); }
@@ -40,10 +42,10 @@ void send(const std::string &line) { for(char c:line)Serial.input.push_back(c);S
 std::vector<uint8_t> oldPayload(const BuddySaveData &s, GearId gear) {
  std::vector<uint8_t> bytes(148);uint8_t *p=bytes.data();
  put32(p,1);put64(p,s.createdAt);put64(p,s.totalObservations);put32(p,s.uniqueDaysObserved);
- put64(p,s.latestObservationAt);put32(p,s.lastObservedDate);put32(p,s.latestTemperatureDeciF);
+ put64(p,s.latestObservationAt);put32(p,s.lastObservedDate);put32(p,s.totalObservations ? milliCToFahrenheitDeci(s.latestTemperatureMilliC) : 0);
  put32(p,s.latestWeatherCode);put32(p,static_cast<uint8_t>(s.latestCategory));
- put32(p,s.highestTemperatureDeciF);put64(p,s.highestTemperatureAt);
- put32(p,s.lowestTemperatureDeciF);put64(p,s.lowestTemperatureAt);
+ put32(p,s.totalObservations ? milliCToFahrenheitDeci(s.highestTemperatureMilliC) : 0);put64(p,s.highestTemperatureAt);
+ put32(p,s.totalObservations ? milliCToFahrenheitDeci(s.lowestTemperatureMilliC) : 0);put64(p,s.lowestTemperatureAt);
  for(auto count:s.weatherCounts)put64(p,count);
  put32(p,s.discoveredWeather);put32(p,s.unlockedGear);put32(p,static_cast<uint8_t>(gear));
  assert(p==bytes.data()+148);return bytes;
@@ -54,6 +56,14 @@ std::vector<uint8_t> oldRecord(const BuddySaveData &s, GearId gear, uint64_t gen
  memcpy(bytes.data()+24,payload.data(),148);
  put32(p,hashBytes(payload.data(),148,hashBytes(bytes.data(),20)));return bytes;
 }
+void legacyTemperatures(JsonDocument &doc, const BuddySaveData &data) {
+ doc["latestTemperatureDeciF"]=milliCToFahrenheitDeci(data.latestTemperatureMilliC);
+ doc["highestTemperatureDeciF"]=milliCToFahrenheitDeci(data.highestTemperatureMilliC);
+ doc["lowestTemperatureDeciF"]=milliCToFahrenheitDeci(data.lowestTemperatureMilliC);
+ doc.remove("latestTemperatureMilliC");doc.remove("highestTemperatureMilliC");doc.remove("lowestTemperatureMilliC");
+ doc.remove("latestMetrics");doc.remove("records");
+}
+#ifndef FWF_RICH_WEATHER_TEST
 int main() {
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  blank(); checkpointJournal();assert(nvsWrites==1 && getBuddySave().createdAt==fakeEpoch);
@@ -72,12 +82,12 @@ int main() {
  for(int i=0;i<50;i++)updateJournal();assert(nvsWrites==writes);
  // Deep-sleep/cold reboot loads permanent progress; reopening or same live timestamp does not award.
  initializeJournal();assert(getBuddySave().createdAt==birth && getBuddySave().totalObservations==1);
- assert(!recordWeatherObservation({fakeEpoch+59,999,0,WeatherCategory::CLEAR}));assert(nvsWrites==writes);
- assert(!recordWeatherObservation({fakeEpoch-10,999,0,WeatherCategory::CLEAR}));
- assert(!recordWeatherObservation({fakeEpoch+60,999,0,WeatherCategory::SNOW}));
- observe(61,650);assert(getBuddySave().uniqueDaysObserved==1 && getBuddySave().lowestTemperatureDeciF==650);
+ assert(!recordWeatherObservation({fakeEpoch+59,fahrenheitDeciToMilliC(999),0,WeatherCategory::CLEAR}));assert(nvsWrites==writes);
+ assert(!recordWeatherObservation({fakeEpoch-10,fahrenheitDeciToMilliC(999),0,WeatherCategory::CLEAR}));
+ assert(!recordWeatherObservation({fakeEpoch+60,fahrenheitDeciToMilliC(999),0,WeatherCategory::SNOW}));
+ observe(61,650);assert(getBuddySave().uniqueDaysObserved==1 && getBuddySave().lowestTemperatureMilliC==fahrenheitDeciToMilliC(650));
  int64_t lowAt=getBuddySave().lowestTemperatureAt;
- observe(1,800,86400);assert(getBuddySave().uniqueDaysObserved==2 && getBuddySave().highestTemperatureDeciF==800);
+ observe(1,800,86400);assert(getBuddySave().uniqueDaysObserved==2 && getBuddySave().highestTemperatureMilliC==fahrenheitDeciToMilliC(800));
  observe(3,650);assert(getBuddySave().lowestTemperatureAt==lowAt);
  observe(95,550);assert(getBuddySave().weatherCounts[5]==1); // Ties retain first record date.
  for(int i=1;i<10;i++)observe(61,600);
@@ -145,7 +155,7 @@ int main() {
    storage["fwf-buddy"]["save0"].back()^=1;
    initializeJournal();assert(dirty && buddySaveChecksum(getBuddySave())==buddySaveChecksum(expected));
    // Old JSON checksum must be verified using v1 bytes, then upgrade for confirmation.
-   JsonDocument oldJson;assert(!deserializeJson(oldJson,json));oldJson["saveVersion"]=1;
+   JsonDocument oldJson;assert(!deserializeJson(oldJson,json));oldJson["saveVersion"]=1;legacyTemperatures(oldJson,saved);
    oldJson.remove("equippedSlots");oldJson["equippedGear"]=id;
    auto payload=oldPayload(saved,gear);char hash[9];snprintf(hash,9,"%08lx",(unsigned long)hashBytes(payload.data(),payload.size()));
    oldJson["checksum"]=hash;std::string backup;serializeJson(oldJson,backup);
@@ -178,7 +188,7 @@ int main() {
  failWrite=true;checkpointJournal(true);assert(storage["fwf-buddy"]["save1"]==v2);
  failWrite=false;checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
  // V2 JSON verifies its original checksum before upgrading/defaulting palette.
- assert(!deserializeJson(doc,json));doc["saveVersion"]=2;doc.remove("furPalette");doc.remove("setupComplete");
+ assert(!deserializeJson(doc,json));doc["saveVersion"]=2;legacyTemperatures(doc,v2Expected);doc.remove("furPalette");doc.remove("setupComplete");
  char v2Hash[9];snprintf(v2Hash,9,"%08lx",(unsigned long)hashBytes(v2.data()+24,168));doc["checksum"]=v2Hash;
  bad.clear();serializeJson(doc,bad);assert(deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
  assert(buddySaveChecksum(restored)==buddySaveChecksum(v2Expected));
@@ -194,7 +204,7 @@ int main() {
  // Independent v3 fixture retains palette/setup and every progress field.
  auto beforeV3Storage=storage; auto v3Buddy=getBuddySave();
  v3Buddy.furPalette=FurPaletteId::BLUE;v3Buddy.setupComplete=true;
- uint8_t full[PAYLOAD_BYTES];encodeCurrent(v3Buddy,full);uint8_t *ver=full;put32(ver,3);
+ uint8_t full[PAYLOAD_BYTES];auto oldV3Data=v3Buddy;oldV3Data.saveVersion=3;encodeCurrent(oldV3Data,full);uint8_t *ver=full;put32(ver,3);
  std::vector<uint8_t> v3(200);uint8_t *header=v3.data();
  put32(header,SAVE_MAGIC);put32(header,3);put32(header,176);put64(header,55);header+=4;
  memcpy(v3.data()+24,full,176);header=v3.data()+20;
@@ -204,7 +214,7 @@ int main() {
  assert(getBuddySave().soundEnabled && getBuddySave().units==UnitsId::US && !getBuddySave().locationConfigured);
  assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(v3Buddy));
  checkpointJournal(true);initializeJournal();assert(!dirty && !buddyNeedsSetup());
- Print oldV3;assert(serializeBuddySave(v3Buddy,oldV3));assert(!deserializeJson(doc,oldV3.output));doc["saveVersion"]=3;
+ Print oldV3;assert(serializeBuddySave(v3Buddy,oldV3));assert(!deserializeJson(doc,oldV3.output));doc["saveVersion"]=3;legacyTemperatures(doc,v3Buddy);
  for(const char *key:{"soundEnabled","units","locationConfigured","latitudeMicrodegrees","longitudeMicrodegrees"})doc.remove(key);
  char v3Hash[9];snprintf(v3Hash,9,"%08lx",(unsigned long)hashBytes(full,176));doc["checksum"]=v3Hash;
  bad.clear();serializeJson(doc,bad);assert(deserializeBuddySave(bad.c_str(),bad.size(),restored,error));
@@ -233,7 +243,7 @@ int main() {
  // Unknown version on either slot locks all writes, including import/equipment.
  storage["fwf-buddy"][latestKey][4]=99;auto protectedStorage=storage;
  initializeJournal();assert(!journalAvailable());
- assert(!recordWeatherObservation({fakeEpoch+3600,700,0,WeatherCategory::CLEAR}));
+ assert(!recordWeatherObservation({fakeEpoch+3600,fahrenheitDeciToMilliC(700),0,WeatherCategory::CLEAR}));
  assert(!importBuddy(json.c_str(),json.size()));checkpointJournal(true);assert(storage==protectedStorage);
  // Unknown payload size also survives boot unchanged.
  blank();checkpointJournal();storage["fwf-buddy"]["save0"]=std::vector<uint8_t>(200,0);protectedStorage=storage;
@@ -304,3 +314,5 @@ int main() {
  observe(0,700,5*3600);assert(getBuddySave().lastObservedDate!=day && getBuddySave().uniqueDaysObserved==2);
  puts("PASS: NVS power/reboot retention, birthday migration, guards/days/records/counts/discovery/all gear rules, retries/fallback, future-version protection, JSON roundtrip/validation, staged confirmed import and bounded Serial commands.");
 }
+
+#endif

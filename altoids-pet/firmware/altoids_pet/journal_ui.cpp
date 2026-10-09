@@ -8,6 +8,7 @@
 
 namespace {
 uint8_t journalPage = 0;
+uint8_t recordsPage = 0;
 GearId selectedGear = GearId::NONE;
 GearSlot selectedSlot = GearSlot::HEAD;
 bool choosingItem = false;
@@ -67,6 +68,12 @@ void formatDate(int64_t timestamp, char *text, size_t length, bool withTime = fa
 void formatTemperature(int32_t deciF, char *text, size_t length) {
   formatBuddyTemperature(deciF, text, length);
 }
+void latestMetricRow(const BuddySaveData &data, MetricId metric, const char *label, int y) {
+  char value[32], row[48];
+  if (data.latestMetrics.has(metric)) formatBuddyMetric(metric, data.latestMetrics.values[uint8_t(metric)], value, sizeof(value));
+  else snprintf(value, sizeof(value), "--");
+  snprintf(row, sizeof(row), "%s %s", label, value); centered(y, row);
+}
 void noObservations() {
   centered(44, "NO OBSERVATIONS YET");
   centered(67, "Waiting for a");
@@ -78,7 +85,7 @@ void drawJournal() {
     const BuddySaveData &data = getBuddySave();
     char text[32];
     if (journalPage == 0) {
-      textAt(4, 27, "SUMMARY 1/4");
+      textAt(4, 27, "SUMMARY 1/5");
       centered(39, "OBSERVATIONS");
       snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.totalObservations));
       centered(50, text, 2);
@@ -91,23 +98,27 @@ void drawJournal() {
       textAt(4, 89, "FIELD RESEARCH BEGAN");
       formatDate(data.createdAt, text, sizeof(text));
       textAt(4, 99, text);
-    } else if (journalPage == 1) {
-      textAt(4, 27, "LATEST 2/4");
+    } else if (journalPage == 1 || journalPage == 2) {
+      textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/5" : "AIR & WIND 3/5");
       if (data.totalObservations == 0) noObservations();
       else {
-        formatDate(data.latestObservationAt, text, sizeof(text), true);
-        centered(41, text);
-        formatTemperature(data.latestTemperatureDeciF, text, sizeof(text));
-        centered(61, text, 2);
-        uint8_t category = static_cast<uint8_t>(data.latestCategory);
-        centered(85, category < WEATHER_CATEGORY_COUNT ? categoryLabels[category] : "UNKNOWN");
-        snprintf(text, sizeof(text), "CODE %ld", static_cast<long>(data.latestWeatherCode));
-        centered(100, text);
+        if (journalPage == 1) {
+          uint8_t category = static_cast<uint8_t>(data.latestCategory);
+          centered(39, category < WEATHER_CATEGORY_COUNT ? categoryLabels[category] : "UNKNOWN");
+          formatTemperature(data.latestTemperatureMilliC, text, sizeof(text)); centered(51, text, 2);
+          latestMetricRow(data, MetricId::HUMIDITY, "HUM", 75);
+          latestMetricRow(data, MetricId::PRECIPITATION, "PRECIP", 90);
+        } else {
+          latestMetricRow(data, MetricId::WIND, "WIND", 39);
+          latestMetricRow(data, MetricId::GUST, "GUST", 57);
+          latestMetricRow(data, MetricId::PRESSURE, "PRESSURE", 75);
+          formatDate(data.latestObservationAt, text, sizeof(text), true); centered(98, text);
+        }
       }
     } else {
-      snprintf(text, sizeof(text), "WEATHER %u/4", unsigned(journalPage + 1));
+      snprintf(text, sizeof(text), "WEATHER %u/5", unsigned(journalPage + 1));
       textAt(4, 25, text);
-      uint8_t first = (journalPage - 2) * 4;
+      uint8_t first = (journalPage - 3) * 4;
       for (uint8_t row = 0; row < 4; ++row) {
         uint8_t category = first + row;
         int y = 37 + row * 19;
@@ -122,25 +133,34 @@ void drawJournal() {
   }
   finishScreen();
 }
+void recordRow(const char *label, const WeatherRecord &record, MetricId metric, int y) {
+  char value[32], date[32]; textAt(4, y, label);
+  if (record.timestamp == 0) { centered(y + 12, "NOT OBSERVED"); return; }
+  formatBuddyMetric(metric, record.value, value, sizeof(value)); centered(y + 9, value);
+  formatDate(record.timestamp, date, sizeof(date)); centered(y + 18, date);
+}
 void drawRecords() {
   beginScreen("RECORDS");
   if (!unavailable()) {
     const BuddySaveData &data = getBuddySave();
+    const char *titles[] = {"TEMPERATURE 1/4", "WIND 2/4", "ATMOSPHERE 3/4", "PRECIPITATION 4/4"};
+    centered(24, titles[recordsPage]);
     if (data.totalObservations == 0) noObservations();
-    else {
-      char text[32];
-      centered(29, "HIGHEST");
-      formatTemperature(data.highestTemperatureDeciF, text, sizeof(text));
-      centered(40, text, 2);
-      formatDate(data.highestTemperatureAt, text, sizeof(text), true);
-      centered(59, text);
-      centered(73, "LOWEST");
-      formatTemperature(data.lowestTemperatureDeciF, text, sizeof(text));
-      centered(84, text, 2);
-      formatDate(data.lowestTemperatureAt, text, sizeof(text), true);
-      centered(101, text);
-    }
-    centered(111, "C:MENU");
+    else if (recordsPage == 0) {
+      char text[32]; centered(34, "HIGHEST");
+      formatTemperature(data.highestTemperatureMilliC, text, sizeof(text)); centered(44, text, 2);
+      formatDate(data.highestTemperatureAt, text, sizeof(text)); centered(62, text);
+      centered(72, "LOWEST"); formatTemperature(data.lowestTemperatureMilliC, text, sizeof(text)); centered(82, text, 2);
+      formatDate(data.lowestTemperatureAt, text, sizeof(text)); centered(100, text);
+    } else if (recordsPage == 1) {
+      recordRow("STRONGEST WIND", data.records[0], MetricId::WIND, 37);
+      recordRow("STRONGEST GUST", data.records[1], MetricId::GUST, 74);
+    } else if (recordsPage == 2) {
+      recordRow("HIGHEST HUMIDITY", data.records[2], MetricId::HUMIDITY, 31);
+      recordRow("LOWEST PRESSURE", data.records[3], MetricId::PRESSURE, 57);
+      recordRow("HIGHEST PRESSURE", data.records[4], MetricId::PRESSURE, 83);
+    } else recordRow("WETTEST OBSERVATION", data.records[5], MetricId::PRECIPITATION, 49);
+    centered(111, "A:NEXT C:MENU");
   }
   finishScreen();
 }
@@ -199,7 +219,7 @@ bool isJournalScreen() {
 void openJournalScreen(ScreenMode screen) {
   if (screen != JOURNAL_SCREEN && screen != RECORDS_SCREEN && screen != GEAR_SCREEN) return;
   currentScreen = screen;
-  journalPage = 0;
+  journalPage = 0; recordsPage = 0;
   selectedSlot = GearSlot::HEAD;
   choosingItem = false;
   selectedGear = GearId::NONE;
@@ -210,7 +230,8 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
   if (!isJournalScreen()) return false;
   bool redraw = false;
   if (aPressed) {
-    if (currentScreen == JOURNAL_SCREEN) { journalPage = (journalPage + 1) % 4; redraw = true; }
+    if (currentScreen == RECORDS_SCREEN) { recordsPage = (recordsPage + 1) % 4; redraw = true; }
+    if (currentScreen == JOURNAL_SCREEN) { journalPage = (journalPage + 1) % 5; redraw = true; }
     if (currentScreen == GEAR_SCREEN && journalAvailable()) {
       if (!choosingItem) selectedSlot = static_cast<GearSlot>((static_cast<uint8_t>(selectedSlot) + 1) % GEAR_SLOT_COUNT);
       else {

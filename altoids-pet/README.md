@@ -97,6 +97,9 @@ altoids-pet/
 │   ├── gear_sprites.cpp / gear_sprites.h
 │   ├── gear_overlay.cpp / gear_overlay.h
 │   ├── weather.cpp / weather.h
+│   ├── weather_cache.cpp
+│   ├── weather_observation.cpp / weather_observation.h
+│   ├── measurement_units.h
 │   ├── power.cpp / power.h
 │   ├── timer.cpp / timer.h
 │   ├── sound.cpp / sound.h
@@ -149,9 +152,11 @@ altoids-pet/
 
 An observation is created only after the existing **successful live Open-Meteo
 fetch during boot/wake**, with a valid system clock, numeric temperature, and
-supported weather category. It carries the UTC timestamp, temperature in tenths
-Fahrenheit, raw weather code, and mapped category. Display temperature formatting
-and the fetch URL are unchanged. Missing/invalid measurements are not rewarded.
+supported weather category. It carries the UTC timestamp, temperature in
+thousandths Celsius, raw weather code/category, and optional humidity, wind,
+gust, surface pressure and precipitation. Display temperature formatting is
+centralized; the request adds optional metric fields. Invalid required
+measurements never create observations. Missing optional values remain unset.
 
 Each accepted observation updates:
 
@@ -212,7 +217,7 @@ There is no fur-settings menu, evolution, naming, gender, XP, or care system.
 
 ## Permanent saves and RTC cache
 
-`BuddySaveData` in `save.h` is **saveVersion 4**. It contains the research start
+`BuddySaveData` in `save.h` is **saveVersion 5**. It contains the research start
 (`createdAt`, exported as `researchBeganAt`), observation/day totals, latest
 observation, dated high/low records, eight category counters, discovery flags,
 unlocked gear flags, six equipped slot IDs, a stable `furPalette` ID and
@@ -224,18 +229,26 @@ an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 196-byte little-endian payload. Native structs, padding, mood,
+and an explicit 292-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
 
-Version 3 records (176-byte payloads) migrate to version 4, preserving every
+Version 4 records (196-byte payloads) migrate to v5. Their Fahrenheit
+high/low/latest values convert to thousandths Celsius; original displayed
+Fahrenheit precision and dates are retained. Journal counts, discoveries, gear,
+palette, setup completion, timestamps, sound, units and location survive.
+Added metrics and lifetime records start unset. Versions 1–3 first receive their
+existing defaults/migrations, then the same Celsius conversion. Supported older
+JSON checksums are verified using their original Fahrenheit payload encoding.
+
+Version 3 records (176-byte payloads) migrate to version 5, preserving every
 progress field, fur palette and setup flag. New settings default to US units,
 the `SOUND_ENABLED` config default, and the configured latitude/longitude until
 a saved location override exists. Version 2 (168 bytes) and version 1 (148 bytes)
 retain their existing palette/setup and single-item-to-slot migrations, then
 receive these settings defaults. Existing completed buddies never repeat setup.
-The newest valid generation wins across v1/v2/v3/v4 records. Migration queues
+The newest valid generation wins across v1/v2/v3/v4/v5 records. Migration queues
 an alternate-slot checkpoint, retaining the old record as fallback. Failed
 writes leave migration pending. Unknown/newer versions on either key block all
 writes and never reset the buddy.
@@ -254,7 +267,7 @@ slot is valid but buddy keys exist, the loader protects the damaged save rather
 than initializing a new buddy. A genuinely new buddy requires absent buddy keys
 and no legacy buddy. Unsupported/damaged legacy data is also protected. Future versions
 extend the decoder/migration dispatch in `save.cpp`, rather than reinterpreting
-old payloads. New event categories, wind/humidity/pressure records, alerts, moon
+old payloads. New event categories, alerts, moon
 collections, and more gear can be added with explicit version migrations.
 
 NVS writes occur only for new/migrated save initialization, first valid creation
@@ -341,6 +354,51 @@ The menu is WEATHER, TIMER, JOURNAL, RECORDS, GEAR, SETTINGS. WEATHER and TIMER
 retain their first two positions and existing controls. The six entries fit
 on one screen. SETTINGS opens the six-item menu documented below.
 
+## Rich live weather observations
+
+The Open-Meteo current request now includes `temperature_2m`,
+`relative_humidity_2m`, `wind_speed_10m`, `wind_gusts_10m`, `surface_pressure`,
+`precipitation` and `weather_code`. Explicit request units are Celsius, km/h
+and mm; surface pressure is hPa. Daily sunrise/sunset, weather category mapping,
+Central clock handling and the existing fetch/cache schedule remain unchanged.
+These are current model conditions, not severe-weather alerts or sensor readings.
+See [Open-Meteo's current-condition documentation](https://open-meteo.com/en/docs).
+Precipitation records compare the amount returned for the current observation
+interval, not daily rainfall or accumulated lifetime rainfall.
+
+Temperature is stored as signed thousandths Celsius (`*TemperatureMilliC`).
+Optional fields use signed hundredths of percent, km/h, hPa or mm. Latest
+validity bits distinguish missing data from a valid zero. Each new lifetime
+record stores its metric integer and UTC timestamp; timestamp zero means unset.
+Invalid/null/missing optional fields are excluded individually, while valid
+required temperature/weather-code observations still succeed. Supported optional
+ranges are humidity 0–100%, wind/gust 0–500 km/h, surface pressure 100–1200 hPa
+and precipitation 0–1000 mm. Required temperature range is -130–100 C.
+
+Only successful live fetches submit observations. The existing 60-second guard,
+backward-time rejection, Central day counting and observation-triggered writes
+remain. Cached wakeups do not submit observations. Greater/lesser record updates
+are strict; ties keep the original date. Serial prints one measurement diagnostic
+per successful fetch, with unavailable fields labeled, rather than per frame.
+The separate `weather_cache.cpp` retains the same RTC save/restore entry points;
+it also retains raw Celsius for HOME/WEATHER display after wake.
+
+`measurement_units.h` contains pure temperature conversions; `units.h` centralizes
+formatting/conversion for all measurements. US wind uses mph, pressure inHg and
+precipitation inches; Metric uses km/h, hPa and mm. No permanent values change
+when toggling UNITS. `latestJournalTemperature`, `latestJournalMetric` and
+`journalRecord` expose valid canonical readings/records for future gear rules.
+Existing boots still require a below-freezing temperature; no gear catalog,
+alert collection or unlock threshold changes are added.
+
+Version 5 JSON adds `latestTemperatureMilliC`, `highestTemperatureMilliC`,
+`lowestTemperatureMilliC`, `latestMetrics` and `records`. Optional latest values
+are JSON null when unavailable. Metric keys encode their scale/unit; each record
+has `value` and `timestamp`. Import validates types, ranges, presence, record
+bounds, timestamps, paired pressure extrema, existing progress rules and checksum.
+Versions 1–4 remain importable with new metrics/records unset. No RTC cache is
+exported. The desktop backup utility uses the same commands and accepts v5.
+
 ## Settings
 
 SETTINGS contains SOUND, UNITS, LOCATION, EXPORT BUDDY, IMPORT BUDDY and ABOUT.
@@ -351,9 +409,10 @@ an unchanged value does not write. All sound cues honor the stored ON/OFF,
 including timer completion; disabling also stops a current cue.
 
 US displays Fahrenheit; METRIC displays Celsius throughout HOME, WEATHER,
-Journal and Records. Permanent temperatures remain tenths Fahrenheit; records,
-dates and unlock thresholds do not change. Wind (mph/km/h) and precipitation
-(inches/mm) unit labels describe future fields; those measurements are not added.
+Journal and Records. Permanent temperature is Celsius, winds are km/h,
+pressure hPa, precipitation mm and humidity percent. UI conversions select
+Fahrenheit/mph/inHg/inches or Celsius/km/h/hPa/mm without altering records,
+dates or unlock rules. Humidity remains percent in both modes.
 The focus/timer screens currently have no temperature display.
 
 LOCATION displays six-decimal latitude/longitude and whether they come from
@@ -383,14 +442,17 @@ From HOME, A opens the menu, A advances its selection, and B opens the selected
 screen. C from these three screens returns to the menu at the same selection;
 C from the menu retains its existing return-home behavior.
 
-- **JOURNAL:** A cycles four pages: total observations/days/discovered types and
-  FIELD RESEARCH BEGAN date; latest observation's Central date/time, temperature,
-  category and weather code; clear/mainly-clear/partly-cloudy/cloudy counts; and
-  rain/storm/snow/fog counts. Filled dots mark discovered categories; hollow dots
+- **JOURNAL:** A cycles five pages: summary and FIELD RESEARCH BEGAN;
+  latest conditions (category, temperature, humidity, precipitation);
+  latest air/wind (wind, gust, surface pressure, Central date/time);
+  clear/mainly-clear/partly-cloudy/cloudy counts; rain/storm/snow/fog counts.
+  Unavailable optional values show `--`. Filled dots mark discovered categories; hollow dots
   mark undiscovered ones. B has no action.
-- **RECORDS:** Shows highest/lowest temperatures to a tenth Fahrenheit with their
-  Central dates/times. A and B have no action. With no observations, it shows an
-  explicit waiting message rather than zero-temperature records.
+- **RECORDS:** A cycles TEMPERATURE (high/low), WIND (strongest sustained/gust),
+  ATMOSPHERE (highest humidity, lowest/highest surface pressure), and
+  PRECIPITATION (wettest observation). Values use the selected units and show
+  Central dates. B has no action; C returns to MENU. Unset records show
+  NOT OBSERVED; a genuinely observed zero has a timestamp and displays zero.
 - **GEAR:** Opens a six-slot overview showing the equipped item in each slot.
   A cycles slots; B opens the selected slot. Within a slot, A cycles NONE and
   compatible unlocked items; B equips the highlighted choice. NONE removes only
@@ -432,10 +494,10 @@ and B on the buddy after device validation. Firmware/protocol are unchanged.
 Use USB Serial at **115200 baud**, with newline, carriage-return, or CRLF-terminated commands. Export/import
 serialize all permanent fields, including a canonical-payload FNV-1a checksum
 written as eight hexadecimal characters. It detects accidental corruption; it
-is not an authentication mechanism. JSON uses tenths Fahrenheit regardless of
+is not an authentication mechanism. JSON uses canonical metric integers regardless of
 selected display units and contains no Wi-Fi credentials or weather cache.
 
-Version 4 JSON contains all six numeric equipment IDs plus the selected fur ID
+Version 5 JSON contains all six numeric equipment IDs plus the selected fur ID
 and setup state, plus settings:
 
 ```json
@@ -452,10 +514,10 @@ and setup state, plus settings:
 Gear IDs remain unchanged; 0 means NONE. Import requires all slots, compatible
 unlocked items, integer fur IDs 0–4, a boolean setup flag, and a matching checksum.
 Strings, missing palette fields, invalid IDs and newer versions are rejected
-without writes. Version 1/2/3 backups remain supported: their original byte-format
-checksums are verified before upgrading to v4. Version 3 retains fur/setup;
+without writes. Version 1/2/3/4 backups remain supported: their original byte-format
+checksums are verified before upgrading to v5. Versions 3/4 retain fur/setup;
 versions 1/2 receive ORANGE and setup complete. All receive settings defaults.
-Version 4 requires valid sound/units/location fields and includes them in the
+Versions 4/5 require valid sound/units/location fields and includes them in the
 checksum. Current-version backups also preserve an unfinished setup's false flag.
 
 ```text
@@ -698,12 +760,12 @@ On the physical device:
 - Run each timer preset through focus/DONE. Check large countdown, book/gear
   overlap, night sleeping pose, happy completion, sound, and sleep inhibition.
 - Export Buddy before/after upload with erase disabled. Confirm progress and
-  all six equipped slots are unchanged; v2 upgrades to v4 with ORANGE and no setup.
+  all six equipped slots are unchanged; v2 upgrades to v5 with ORANGE and no setup.
 - Test an actual online weather/NTP fetch and subsequent cached wakes; check
   Serial for resets/allocation failures while the larger canvas is allocated.
 
 
-- Open JOURNAL, cycle all four pages, and compare totals, dates, latest weather,
+- Open JOURNAL, cycle all five pages, and compare totals, dates, latest weather,
   counts and discovery dots with exported JSON. Confirm B changes nothing and
   C returns to the same menu entry.
 - Press/hold/release A in the menu, JOURNAL, GEAR and timer setup. Each cycle
@@ -830,7 +892,7 @@ First-run/palette hardware checks:
 - Check selected color through every expression, B hop/heart, night sleep,
   weather reactions, timer focus/book and DONE. Equip all slots and check masks,
   eye readability, attachments and unchanged foreground/weather layering.
-- Export/import a v4 buddy and verify palette/settings survive. Check old v2/v3 backups
+- Export/import a v5 buddy and verify palette/settings survive. Check old v2/v3/v4 backups
   upgrade to ORANGE without setup. Invalid fur IDs, strings, missing fields and
   bad checksums must leave the current buddy intact.
 
@@ -902,3 +964,34 @@ coordinates afterward. Test export success, malformed/future-version/bad-checksu
 imports, valid import cancellation and B-only replacement. Confirm ABOUT text,
 unchanged-frame/minute flicker behavior, and normal sleep/wake/cache/timer/gear.
 Use the existing partition and erase-disabled settings when uploading yourself.
+
+## Rich weather validation and hardware checks
+
+```sh
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/weather/stubs -Ialtoids-pet/tests/journal/stubs \
+  -Ialtoids-pet/firmware/altoids_pet \
+  -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+  altoids-pet/tests/weather/test_weather.cpp -o /tmp/fwf-weather-tests
+/tmp/fwf-weather-tests
+```
+
+The suite tests optional missing/invalid/zero values, every conversion, strict
+record improvements/ties, metric queries, NVS/JSON roundtrips, v4 migration,
+invalid imports, and 100 calls through real RTC restore helpers without creating
+observations or writing progress. Existing migration suites cover versions 1–3;
+layout tests render all new pages in both unit modes through the actual canvas.
+
+Before your manual upload, export a v4 backup and keep flash erase disabled.
+Check migration retains totals, dates, records, discoveries, gear, fur, setup
+status and settings. Verify one new live fetch adds one observation and prints
+all measurements; check both latest pages and four Records pages with A/C.
+Switch US/Metric and compare records/dates without changing JSON values. Check
+unset records show NOT OBSERVED until a valid measurement arrives. Repeated
+cached sleep/wake must retain counts/records, raw temperature and Wi-Fi-off
+behavior. Export/import v5, cancel before B, and verify legacy v4 backup import.
+Confirm no trails/black flashes, and unchanged gear/blink/weather reactions,
+buttons, sunrise/sunset/moon, timer, sound, deep sleep and B wake. Compare pressure
+as surface pressure (altitude-dependent), not sea-level pressure. Wettest means
+one observation interval, not a daily total. No hardware test or upload is automatic.

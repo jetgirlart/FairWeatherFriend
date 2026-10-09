@@ -3,9 +3,10 @@
 
 struct WeatherObservation {
   int64_t timestamp;
-  int32_t temperatureDeciF;
+  int32_t temperatureMilliC;
   int32_t weatherCode;
   WeatherCategory category;
+  WeatherMetrics metrics;
 };
 
 WeatherCategory observationCategoryForCode(int32_t code);
@@ -38,3 +39,9 @@ BuddyTransferStatus buddyTransferStatus();
 uint32_t pendingBuddyImportChecksum();
 void beginBuddyTransfer(bool importing);
 void endBuddyTransfer();
+
+// Canonical metric queries for future gear conditions; false means unavailable.
+bool latestJournalMetric(MetricId id, int32_t &value);
+bool journalRecord(RecordId id, WeatherRecord &record);
+
+bool latestJournalTemperature(int32_t &milliC);

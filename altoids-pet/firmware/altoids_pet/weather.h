@@ -44,10 +44,11 @@ extern int sunsetMinute;
 extern WeatherState weatherState;
 extern bool weatherValid;
 extern int temperatureF;
+extern int32_t temperatureMilliC;
 extern int weatherCode;
 extern MoonPhase currentMoonPhase;
 
-// Defined with RTC_DATA_ATTR in weather.cpp; retained across deep sleep.
+// Defined with RTC_DATA_ATTR in weather_cache.cpp; retained across deep sleep.
 extern bool cachedWeatherValid;
 extern time_t lastOnlineSync;
 

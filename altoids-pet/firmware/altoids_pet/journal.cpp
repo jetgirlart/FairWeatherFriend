@@ -123,7 +123,7 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   uint8_t category = static_cast<uint8_t>(observation.category);
   uint32_t date = localDate(observation.timestamp);
   if (category >= WEATHER_CATEGORY_COUNT || observation.category != observationCategoryForCode(observation.weatherCode) ||
-      date == 0 || observation.temperatureDeciF < -2000 || observation.temperatureDeciF > 2000 ||
+      date == 0 || observation.temperatureMilliC < -130000 || observation.temperatureMilliC > 100000 ||
       observation.timestamp < buddy.createdAt) {
     Serial.println("Observation not recorded: invalid time, temperature or category."); return false;
   }
@@ -143,18 +143,33 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   if (date != next.lastObservedDate) ++next.uniqueDaysObserved;
   next.lastObservedDate = date;
   next.latestObservationAt = observation.timestamp;
-  next.latestTemperatureDeciF = observation.temperatureDeciF;
+  next.latestTemperatureMilliC = observation.temperatureMilliC;
   next.latestWeatherCode = observation.weatherCode;
   next.latestCategory = observation.category;
   ++next.weatherCounts[category];
   next.discoveredWeather |= 1UL << category;
-  if (first || observation.temperatureDeciF > next.highestTemperatureDeciF) {
-    next.highestTemperatureDeciF = observation.temperatureDeciF;
+  if (first || observation.temperatureMilliC > next.highestTemperatureMilliC) {
+    next.highestTemperatureMilliC = observation.temperatureMilliC;
     next.highestTemperatureAt = observation.timestamp;
   }
-  if (first || observation.temperatureDeciF < next.lowestTemperatureDeciF) {
-    next.lowestTemperatureDeciF = observation.temperatureDeciF;
+  if (first || observation.temperatureMilliC < next.lowestTemperatureMilliC) {
+    next.lowestTemperatureMilliC = observation.temperatureMilliC;
     next.lowestTemperatureAt = observation.timestamp;
+  }
+  next.latestMetrics = WeatherMetrics{};
+  for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
+    MetricId metric = static_cast<MetricId>(i);
+    if (observation.metrics.has(metric) && validMetric(metric, observation.metrics.values[i])) {
+      next.latestMetrics.validMask |= 1UL << i; next.latestMetrics.values[i] = observation.metrics.values[i];
+    }
+  }
+  for (uint8_t i = 0; i < RECORD_COUNT; ++i) {
+    MetricId metric = recordMetric(static_cast<RecordId>(i));
+    if (!next.latestMetrics.has(metric)) continue;
+    int32_t value = next.latestMetrics.values[uint8_t(metric)];
+    auto &record = next.records[i];
+    if (record.timestamp == 0 || (i == uint8_t(RecordId::LOW_PRESSURE) ? value < record.value : value > record.value))
+      record = {value, observation.timestamp};
   }
   evaluateGearUnlocks(next);
   if (!validateBuddySave(next)) { Serial.println("Observation rejected by save validation."); return false; }
@@ -164,9 +179,9 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
     GearId gear = static_cast<GearId>(id);
     if (unlocked & gearFlag(gear)) Serial.printf("Field gear unlocked: %s\n", gearName(gear));
   }
-  Serial.printf("Weather observation #%llu: %s, %.1f F, Central date %lu\n",
+  Serial.printf("Weather observation #%llu: %s, %.3f C, Central date %lu\n",
                 static_cast<unsigned long long>(buddy.totalObservations), weatherCategoryName(observation.category),
-                observation.temperatureDeciF / 10.0, static_cast<unsigned long>(date));
+                observation.temperatureMilliC / 1000.0, static_cast<unsigned long>(date));
   checkpointJournal();
   return true;
 }
@@ -279,4 +294,18 @@ void beginBuddyTransfer(bool importing) {
 }
 void endBuddyTransfer() {
   cancelBuddyImport(); buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
+}
+
+bool latestJournalMetric(MetricId id, int32_t &value) {
+  if (!available || !buddy.latestMetrics.has(id)) return false;
+  value = buddy.latestMetrics.values[uint8_t(id)]; return true;
+}
+bool journalRecord(RecordId id, WeatherRecord &record) {
+  if (!available || uint8_t(id) >= RECORD_COUNT || buddy.records[uint8_t(id)].timestamp == 0) return false;
+  record = buddy.records[uint8_t(id)]; return true;
+}
+
+bool latestJournalTemperature(int32_t &milliC) {
+  if (!available || buddy.totalObservations == 0) return false;
+  milliC = buddy.latestTemperatureMilliC; return true;
 }

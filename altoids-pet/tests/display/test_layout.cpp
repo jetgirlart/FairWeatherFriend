@@ -8,6 +8,7 @@
 bool timeValid=true,weatherValid=true,sunTimesValid=true;
 int currentHour=12,currentMinute=34,sunriseHour=7,sunriseMinute=12,sunsetHour=18,sunsetMinute=42;
 int temperatureF=72;
+int32_t temperatureMilliC=22222;
 MoonPhase currentMoonPhase=MOON_FULL;
 WeatherState weatherState=WEATHER_CLEAR;
 bool isDaylight(){return currentHour>=7 && currentHour<19;}
@@ -80,13 +81,22 @@ int main(){
  handleJournalButtons(false,true,false);snapshot("slot");
  buddy.createdAt=1800000000;buddy.totalObservations=UINT64_MAX;buddy.uniqueDaysObserved=999;
  buddy.discoveredWeather=0xff;buddy.latestObservationAt=1800000000;buddy.latestCategory=WeatherCategory::RAIN;
- buddy.latestTemperatureDeciF=721;buddy.highestTemperatureDeciF=1082;buddy.lowestTemperatureDeciF=-142;
+ buddy.latestTemperatureMilliC=fahrenheitDeciToMilliC(721);buddy.highestTemperatureMilliC=fahrenheitDeciToMilliC(1082);buddy.lowestTemperatureMilliC=fahrenheitDeciToMilliC(-142);
  buddy.highestTemperatureAt=buddy.lowestTemperatureAt=1800000000;
  for(auto &count:buddy.weatherCounts)count=UINT64_MAX;
  openJournalScreen(JOURNAL_SCREEN);snapshot("journal");
  handleJournalButtons(true,false,false);snapshot("latest");
  handleJournalButtons(true,false,false);snapshot("counts");
  openJournalScreen(RECORDS_SCREEN);snapshot("records");
+ for(unsigned i=0;i<METRIC_COUNT;i++){buddy.latestMetrics.validMask|=1UL<<i;buddy.latestMetrics.values[i]=i==3?101325:2000;}
+ for(unsigned i=0;i<RECORD_COUNT;i++)buddy.records[i]={i==3||i==4?101325:2000,1800000000};
+ for(auto units:{UnitsId::US,UnitsId::METRIC}){
+  buddy.units=units;openJournalScreen(RECORDS_SCREEN);
+  for(int i=0;i<4;i++){char name[32];snprintf(name,sizeof(name),"records-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
+  openJournalScreen(JOURNAL_SCREEN);
+  for(int i=0;i<5;i++){char name[32];snprintf(name,sizeof(name),"journal-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
+ }
+
  buddy.setupComplete=true;assert(!beginBuddySetup());
  buddy.setupComplete=false;assert(beginBuddySetup() && buddySetupActive());snapshot("welcome");
  unsigned commits=setupCommits;handleBuddySetupButtons(true,false,false);assert(page==SetupPage::WELCOME);

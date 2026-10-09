@@ -45,19 +45,20 @@ int main() {
  initializeJournal();timeValid=false;checkpointJournal();unsigned writes=nvsWrites;
  openJournalScreen(JOURNAL_SCREEN);assert(shown("0") && shown("WAITING FOR TIME"));
  nextPage();assert(shown("NO OBSERVATIONS YET"));
+ nextPage();assert(shown("NO OBSERVATIONS YET"));
  nextPage();assert(shown("CLEAR") && shown("CLOUDY") && discoveryDots==0);
- nextPage();assert(shown("RAIN") && shown("FOG"));nextPage();assert(shown("SUMMARY 1/4"));
+ nextPage();assert(shown("RAIN") && shown("FOG"));nextPage();assert(shown("SUMMARY 1/5"));
  assert(nvsWrites==writes);unsigned pushes=framePushes;
  for(int i=0;i<50;i++){fakeMillis+=250;updateJournalScreens();}assert(framePushes==pushes);
  assert(handleJournalButtons(false,false,true));assert(currentScreen==MENU && menuIndex==2);
  assert(!handleJournalButtons(true,true,true));
  openJournalScreen(RECORDS_SCREEN);assert(shown("NO OBSERVATIONS YET"));
- pushes=framePushes;handleJournalButtons(true,true,false);assert(framePushes==pushes && nvsWrites==writes);
- timeValid=true;assert(recordWeatherObservation({fakeEpoch,-1,71,WeatherCategory::SNOW}));
+ pushes=framePushes;handleJournalButtons(true,true,false);assert(framePushes==pushes+1 && nvsWrites==writes);openJournalScreen(RECORDS_SCREEN);
+ timeValid=true;assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(-1),71,WeatherCategory::SNOW}));
  fakeMillis+=250;updateJournalScreens();assert(shown("-0.1 F") && shown("HIGHEST") && shown("LOWEST"));
  openJournalScreen(JOURNAL_SCREEN);assert(shown("1") && shown("WEATHER TYPES 1/8"));
- nextPage();assert(shown("SNOW") && shown("CODE 71") && shown("-0.1 F"));
- nextPage();assert(discoveryDots==0);nextPage();assert(discoveryDots==1);
+ nextPage();assert(shown("SNOW") && shown("-0.1 F"));
+ nextPage();assert(shown("PRESSURE --"));nextPage();assert(discoveryDots==0);nextPage();assert(discoveryDots==1);
  openJournalScreen(GEAR_SCREEN);assert(shown("A:NEXT B:OPEN"));
  auto pressB=[](){handleJournalButtons(false,true,false);};
  auto pressC=[](){handleJournalButtons(false,false,true);};
@@ -79,9 +80,9 @@ int main() {
  assert(importBuddy(json.output.c_str(),json.output.size()));assert(confirmBuddyImport(buddySaveChecksum(imported)));
  fakeMillis+=250;updateJournalScreens();assert(shown("NONE")); // Open submenu reconciles selection after import.
  // Fully unlocked outfit: all slot transitions, BODY replacement and single-slot NONE.
- for(int i=0;i<10;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,700,61,WeatherCategory::RAIN}));}
- for(int i=0;i<5;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,310,71,WeatherCategory::SNOW}));}
- fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,700,0,WeatherCategory::CLEAR}));
+ for(int i=0;i<10;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(700),61,WeatherCategory::RAIN}));}
+ for(int i=0;i<5;++i){fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(310),71,WeatherCategory::SNOW}));}
+ fakeEpoch+=3600;assert(recordWeatherObservation({fakeEpoch,fahrenheitDeciToMilliC(700),0,WeatherCategory::CLEAR}));
  openJournalScreen(GEAR_SCREEN);
  const GearId expected[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,
                           GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
@@ -98,13 +99,13 @@ int main() {
  initializeJournal();for(uint8_t slot=0;slot<6;++slot)assert(getBuddySave().equippedSlots[slot]==(slot==3?GearId::NONE:expected[slot]));
  // Full-width counters, negative/large temperatures and record dates stay in bounds.
  buddy=BuddySaveData{};buddy.createdAt=fakeEpoch;buddy.totalObservations=UINT64_MAX;buddy.uniqueDaysObserved=UINT32_MAX;
- buddy.latestObservationAt=fakeEpoch;buddy.lastObservedDate=localDate(fakeEpoch);buddy.latestTemperatureDeciF=-2000;
+ buddy.latestObservationAt=fakeEpoch;buddy.lastObservedDate=localDate(fakeEpoch);buddy.latestTemperatureMilliC=fahrenheitDeciToMilliC(-2000);
  buddy.latestWeatherCode=INT32_MAX;buddy.latestCategory=WeatherCategory::CLEAR;
- buddy.highestTemperatureDeciF=2000;buddy.lowestTemperatureDeciF=-2000;
+ buddy.highestTemperatureMilliC=fahrenheitDeciToMilliC(2000);buddy.lowestTemperatureMilliC=fahrenheitDeciToMilliC(-2000);
  buddy.highestTemperatureAt=buddy.lowestTemperatureAt=fakeEpoch;
  buddy.weatherCounts[0]=UINT64_MAX;buddy.discoveredWeather=1;evaluateGearUnlocks(buddy);
  openJournalScreen(JOURNAL_SCREEN);assert(shown("18446744073709551615") && shown("DAYS 4294967295"));
- nextPage();assert(shown("CODE 2147483647"));nextPage();assert(shown("18446744073709551615"));
+ nextPage();assert(shown("CLEAR"));nextPage();nextPage();assert(shown("18446744073709551615"));
  openJournalScreen(RECORDS_SCREEN);assert(shown("200.0 F") && shown("-200.0 F"));
  // Protected storage clearly shown in all screens, no writes from A/B.
  available=false;writes=nvsWrites;

@@ -1,5 +1,7 @@
 #include "weather.h"
 #include "journal.h"
+#include "weather_observation.h"
+#include "measurement_units.h"
 #include "display.h"
 #include "config.h"
 #include <WiFi.h>
@@ -47,6 +49,7 @@ WeatherState weatherState = WEATHER_UNKNOWN;
 bool weatherValid = false;
 
 int temperatureF = 0;
+int32_t temperatureMilliC = 0;
 int weatherCode = -1;
 
 // ==================================================
@@ -59,23 +62,6 @@ MoonPhase currentMoonPhase = MOON_NEW;
 // RTC MEMORY
 // Survives ESP32 deep sleep.
 // ==================================================
-
-RTC_DATA_ATTR int32_t cachedLatitudeMicrodegrees = 0;
-RTC_DATA_ATTR int32_t cachedLongitudeMicrodegrees = 0;
-RTC_DATA_ATTR bool cacheLocationKnown = false;
-RTC_DATA_ATTR bool cachedWeatherValid = false;
-RTC_DATA_ATTR bool cachedSunTimesValid = false;
-
-RTC_DATA_ATTR int cachedTemperatureF = 0;
-RTC_DATA_ATTR int cachedWeatherCode = -1;
-
-RTC_DATA_ATTR int cachedSunriseHour = 7;
-RTC_DATA_ATTR int cachedSunriseMinute = 0;
-
-RTC_DATA_ATTR int cachedSunsetHour = 19;
-RTC_DATA_ATTR int cachedSunsetMinute = 0;
-
-RTC_DATA_ATTR time_t lastOnlineSync = 0;
 
 // ==================================================
 // TIMEZONE
@@ -325,98 +311,6 @@ double configuredLatitude() {
 double configuredLongitude() {
   const auto &s = getBuddySave(); return s.locationConfigured ? s.longitudeMicrodegrees / 1000000.0 : LONGITUDE;
 }
-void invalidateWeatherLocation() {
-  cachedWeatherValid = cachedSunTimesValid = weatherValid = sunTimesValid = false;
-  cacheLocationKnown = false; lastOnlineSync = 0;
-  weatherState = WEATHER_UNKNOWN;
-  Serial.println("Location changed; weather/sun cache stale. Next normal sync uses saved coordinates.");
-}
-void saveCachedData() {
-
-  if (!weatherValid) {
-    return;
-  }
-
-  cachedLatitudeMicrodegrees = lround(configuredLatitude() * 1000000);
-  cachedLongitudeMicrodegrees = lround(configuredLongitude() * 1000000);
-  cacheLocationKnown = true;
-  cachedWeatherValid =
-    true;
-
-  cachedSunTimesValid =
-    sunTimesValid;
-
-  cachedTemperatureF =
-    temperatureF;
-
-  cachedWeatherCode =
-    weatherCode;
-
-  cachedSunriseHour =
-    sunriseHour;
-
-  cachedSunriseMinute =
-    sunriseMinute;
-
-  cachedSunsetHour =
-    sunsetHour;
-
-  cachedSunsetMinute =
-    sunsetMinute;
-
-  lastOnlineSync =
-    time(nullptr);
-
-  Serial.println(
-    "Weather cached."
-  );
-}
-
-void restoreCachedData() {
-  if (cachedWeatherValid && (!cacheLocationKnown ||
-      cachedLatitudeMicrodegrees != lround(configuredLatitude() * 1000000) ||
-      cachedLongitudeMicrodegrees != lround(configuredLongitude() * 1000000))) {
-    invalidateWeatherLocation();
-  }
-
-  if (!cachedWeatherValid) {
-    return;
-  }
-
-  temperatureF =
-    cachedTemperatureF;
-
-  weatherCode =
-    cachedWeatherCode;
-
-  weatherState =
-    mapWeatherCode(
-      weatherCode
-    );
-
-  sunriseHour =
-    cachedSunriseHour;
-
-  sunriseMinute =
-    cachedSunriseMinute;
-
-  sunsetHour =
-    cachedSunsetHour;
-
-  sunsetMinute =
-    cachedSunsetMinute;
-
-  weatherValid =
-    true;
-
-  sunTimesValid =
-    cachedSunTimesValid;
-
-  Serial.println(
-    "Weather restored from RTC memory."
-  );
-}
-
 // ==================================================
 // FETCH WEATHER
 // ==================================================
@@ -440,9 +334,9 @@ bool fetchWeather() {
     String(configuredLatitude(), 6) +
     "&longitude=" +
     String(configuredLongitude(), 6) +
-    "&current=temperature_2m,weather_code"
+    "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,surface_pressure,precipitation,weather_code"
     "&daily=sunrise,sunset"
-    "&temperature_unit=fahrenheit"
+    "&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm"
     "&timezone=auto"
     "&forecast_days=1";
 
@@ -506,18 +400,15 @@ bool fetchWeather() {
     return false;
   }
 
-  float temperature =
-    doc["current"]
-       ["temperature_2m"];
-
-  weatherCode =
-    doc["current"]
-       ["weather_code"];
-
-  temperatureF =
-    round(
-      temperature
-    );
+  WeatherObservation observation;
+  if (!parseLiveObservation(doc["current"], static_cast<int64_t>(time(nullptr)), observation)) {
+    Serial.println("Live weather rejected: invalid required temperature/code.");
+    return false;
+  }
+  weatherCode = observation.weatherCode;
+  temperatureMilliC = observation.temperatureMilliC;
+  temperatureF = round(observation.temperatureMilliC * 9.0 / 5000.0 + 32);
+  logLiveObservation(observation);
 
   weatherState =
     mapWeatherCode(
@@ -553,34 +444,6 @@ bool fetchWeather() {
     sunriseOK &&
     sunsetOK;
 
-  Serial.print(
-    "Temperature: "
-  );
-
-  Serial.print(
-    temperatureF
-  );
-
-  Serial.println(
-    " F"
-  );
-
-  Serial.print(
-    "Weather code: "
-  );
-
-  Serial.println(
-    weatherCode
-  );
-
-  Serial.print(
-    "Weather: "
-  );
-
-  Serial.println(
-    weatherName()
-  );
-
   if (
     sunTimesValid
   ) {
@@ -600,17 +463,8 @@ bool fetchWeather() {
 
   // Only this successful LIVE fetch can create journal progress. RTC restore
   // and failed fetches never call it. Keep existing fetch/cache/UI semantics.
-  if (timeValid && doc["current"]["temperature_2m"].is<float>() &&
-      doc["current"]["weather_code"].is<int32_t>() &&
-      isfinite(temperature) && temperature >= -200 && temperature <= 200) {
-    WeatherObservation observation = {
-      static_cast<int64_t>(time(nullptr)), static_cast<int32_t>(lround(temperature * 10)),
-      weatherCode, observationCategoryForCode(weatherCode)
-    };
-    recordWeatherObservation(observation);
-  } else {
-    Serial.println("Live weather displayed; journal observation skipped (invalid clock/measurement).");
-  }
+  if (timeValid) recordWeatherObservation(observation);
+  else Serial.println("Live observation skipped: invalid clock.");
 
   return true;
 }

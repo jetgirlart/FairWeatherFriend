@@ -514,7 +514,7 @@ void drawHome() {
   }
   display.drawFastHLine(26, 182, 180, COLOR_MUTED);
   if (weatherValid) {
-    char text[16]; formatBuddyTemperature(temperatureF * 10, text, sizeof(text), false);
+    char text[16]; formatBuddyTemperature(temperatureMilliC, text, sizeof(text), false);
     display.setTextColor(COLOR_TEXT); centeredText(188, text, 2);
   }
   display.setTextColor(COLOR_COOL);
@@ -526,7 +526,7 @@ void drawWeatherScreen() {
   centeredText(12, "WEATHER", 3);
   iconAt(120, 67);
   if (weatherValid) {
-    char text[16]; formatBuddyTemperature(temperatureF * 10, text, sizeof(text), false);
+    char text[16]; formatBuddyTemperature(temperatureMilliC, text, sizeof(text), false);
     centeredText(98, text, 3); centeredText(135, weatherName(), 2);
   }
   if (sunTimesValid) {

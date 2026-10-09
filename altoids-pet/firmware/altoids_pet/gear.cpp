@@ -38,7 +38,7 @@ uint32_t eligibleGear(const BuddySaveData &data) {
   for (const GearRule &rule : rules) {
     uint64_t count = rule.category == WeatherCategory::UNKNOWN ? data.totalObservations :
                      data.weatherCounts[static_cast<uint8_t>(rule.category)];
-    if (count >= rule.minimumCount && (!rule.belowFreezing || data.lowestTemperatureDeciF < 320)) {
+    if (count >= rule.minimumCount && (!rule.belowFreezing || data.lowestTemperatureMilliC < 0)) {
       flags |= gearFlag(rule.gear);
     }
   }
