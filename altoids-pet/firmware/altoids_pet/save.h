@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 5;
+constexpr uint32_t SAVE_VERSION = 6;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -37,6 +37,24 @@ const char *recordName(RecordId id);
 MetricId recordMetric(RecordId id);
 bool validMetric(MetricId id, int32_t value);
 
+// Stable collectible IDs; append only in a versioned migration.
+enum class FieldEventId : uint8_t {
+  TORNADO_WATCH, TORNADO_WARNING, SEVERE_THUNDERSTORM_WATCH,
+  SEVERE_THUNDERSTORM_WARNING, FLASH_FLOOD_WARNING, FLOOD_WARNING,
+  HURRICANE_WATCH, HURRICANE_WARNING, TROPICAL_STORM_WATCH,
+  TROPICAL_STORM_WARNING, WINTER_STORM_WARNING, BLIZZARD_WARNING,
+  ICE_STORM_WARNING, EXTREME_HEAT_WARNING, EXTREME_COLD_WARNING, COUNT
+};
+constexpr uint8_t FIELD_EVENT_COUNT = uint8_t(FieldEventId::COUNT);
+constexpr uint8_t RECENT_ALERT_COUNT = 32;
+constexpr size_t BUDDY_IMPORT_BYTES = 8192;
+struct FieldEventRecord {
+  uint32_t count = 0; // count > 0 is the canonical discovered flag.
+  int64_t firstAt = 0, latestAt = 0;
+};
+struct RecentAlert { uint64_t hash = 0; int64_t seenAt = 0; };
+const char *fieldEventName(FieldEventId id); // Stable export name / official NWS event.
+
 struct BuddySaveData {
   uint32_t saveVersion = SAVE_VERSION;
   int64_t createdAt = 0; // FIELD RESEARCH BEGAN; 0 until the existing clock is valid.
@@ -63,6 +81,8 @@ struct BuddySaveData {
   bool locationConfigured = false;
   int32_t latitudeMicrodegrees = 0;
   int32_t longitudeMicrodegrees = 0;
+  FieldEventRecord fieldEvents[FIELD_EVENT_COUNT] = {};
+  RecentAlert recentAlerts[RECENT_ALERT_COUNT] = {};
   bool setupComplete = false; // Only genuinely new buddies need first-run setup.
 };
 

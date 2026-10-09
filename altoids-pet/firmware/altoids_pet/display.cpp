@@ -502,6 +502,7 @@ void drawTime() {
   display.setTextSize(2); display.setCursor(14, 41); display.print(currentHour >= 12 ? "PM" : "AM");
 }
 void drawHome() {
+  if (drawFieldEventNotification()) { display.display(); return; }
   display.clearDisplay();
   drawWeatherBackground();
   drawTime();

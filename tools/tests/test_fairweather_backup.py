@@ -92,7 +92,7 @@ class BackupTests(unittest.TestCase):
             self.assertTrue(command.startswith(b"IMPORT_BUDDY "))
             self.assertNotIn(b"\n", command)
             self.assertEqual(json.loads(command[13:]), DATA)
-            large = dict(DATA, note="x" * 4096)
+            large = dict(DATA, note="x" * backup.MAX_COMMAND_BYTES)
             file.write_text(json.dumps(large))
             with self.assertRaises(backup.BackupError):
                 backup.import_command(file)

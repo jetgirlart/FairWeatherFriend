@@ -14,9 +14,10 @@ bool retryPending = false;
 constexpr unsigned long SAVE_RETRY_MS = 60000;
 constexpr int64_t OBSERVATION_GUARD_SECONDS = 60;
 constexpr unsigned long IMPORT_CONFIRM_MS = 60000;
-char serialLine[4097];
+char serialLine[BUDDY_IMPORT_BYTES + 14];
 size_t serialLength = 0;
 bool serialOverflow = false;
+uint32_t newFieldEvents = 0;
 bool buttonImportRequired = false;
 BuddyTransferStatus transferStatus = BuddyTransferStatus::NONE;
 
@@ -74,7 +75,7 @@ void initializeJournal() {
   dirty = available && result != SaveLoadResult::LOADED;
   retryPending = false; importPending = false;
   buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
-  serialLength = 0; serialOverflow = false;
+  serialLength = 0; serialOverflow = false; newFieldEvents = 0;
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
                        result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (settings migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
@@ -225,7 +226,7 @@ bool confirmBuddyImport(uint32_t checksum) {
   }
   bool locationChanged = buddy.locationConfigured != pendingImport.locationConfigured ||
       buddy.latitudeMicrodegrees != pendingImport.latitudeMicrodegrees || buddy.longitudeMicrodegrees != pendingImport.longitudeMicrodegrees;
-  buddy = pendingImport; dirty = false; retryPending = false;
+  buddy = pendingImport; newFieldEvents = 0; dirty = false; retryPending = false;
   if (locationChanged) invalidateWeatherLocation();
   transferStatus = BuddyTransferStatus::IMPORT_COMPLETE;
   cancelBuddyImport();
@@ -308,4 +309,20 @@ bool journalRecord(RecordId id, WeatherRecord &record) {
 bool latestJournalTemperature(int32_t &milliC) {
   if (!available || buddy.totalObservations == 0) return false;
   milliC = buddy.latestTemperatureMilliC; return true;
+}
+
+bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries) {
+  if (!available || !validateBuddySave(next)) return false;
+  buddy = next; dirty = true; newFieldEvents |= discoveries;
+  checkpointJournal(); // Existing retry/before-sleep policy protects failed writes.
+  return true;
+}
+FieldEventId takeNewFieldEvent() {
+  for (uint8_t i = 0; i < FIELD_EVENT_COUNT; ++i) if (newFieldEvents & (1UL << i)) {
+    newFieldEvents &= ~(1UL << i); return FieldEventId(i);
+  }
+  return FieldEventId::COUNT;
+}
+bool discoveredFieldEvent(FieldEventId id) {
+  return available && uint8_t(id) < FIELD_EVENT_COUNT && buddy.fieldEvents[uint8_t(id)].count > 0;
 }

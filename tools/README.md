@@ -99,8 +99,8 @@ screen before typing IMPORT. Export again afterward to verify your restored save
 Local validation rejects malformed/non-object JSON, duplicate keys, non-finite
 numbers and missing/invalid saveVersion/checksum metadata. It does not duplicate
 the firmware's complete schema or recompute its binary-payload checksum. The
-device remains authoritative. Import commands over the firmware's 4096-byte
-line limit are rejected locally. Reading a file or staging it never overwrites
+device remains authoritative. Import commands over the firmware's 8205-byte
+line limit (8192 JSON bytes plus `IMPORT_BUDDY `) are rejected locally. Reading a file or staging it never overwrites
 buddy data.
 
 ## Ports and troubleshooting
@@ -142,3 +142,6 @@ python tools/fairweather_backup.py --help
 Tests use simulated ports/Serial responses and temporary files. Where pyserial
 and POSIX pseudo-terminals are available, an integration test also runs the CLI
 against a virtual serial device. No physical device is opened or uploaded to.
+
+Version 6 backups include severe-weather event records and the bounded recent-alert
+fingerprint cache; versions 1–5 remain supported by firmware migration.

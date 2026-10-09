@@ -31,6 +31,9 @@ bool showTimerScreen(){return false;}
 BuddySaveData buddy;
 const BuddySaveData &getBuddySave(){return buddy;}
 bool journalAvailable(){return true;}
+FieldEventId queuedEvent=FieldEventId::COUNT;
+FieldEventId takeNewFieldEvent(){auto id=queuedEvent;queuedEvent=FieldEventId::COUNT;return id;}
+const char *fieldEventName(FieldEventId id){static const char *names[]={"Tornado Watch","Tornado Warning","Severe Thunderstorm Watch","Severe Thunderstorm Warning","Flash Flood Warning","Flood Warning","Hurricane Watch","Hurricane Warning","Tropical Storm Watch","Tropical Storm Warning","Winter Storm Warning","Blizzard Warning","Ice Storm Warning","Extreme Heat Warning","Extreme Cold Warning"};return names[uint8_t(id)];}
 bool buddyNeedsSetup(){return !buddy.setupComplete;}
 bool setupCommitFails=false;unsigned setupCommits=0;
 bool confirmBuddySetup(FurPaletteId id){if(setupCommitFails)return false;buddy.furPalette=id;buddy.setupComplete=true;setupCommits++;return true;}
@@ -54,6 +57,9 @@ void snapshot(const char *name){
 }
 int main(){
  initializeDisplayBus();initializeDisplay();initializePetState();initializeAnimations();
+ currentScreen=HOME;queuedEvent=FieldEventId::SEVERE_THUNDERSTORM_WARNING;
+ drawHome();snapshot("field-event");assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));
+ fakeMillis+=2500;drawHome();
  buddy.unlockedGear=0x7f;
  const GearId gear[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
  for(int i=0;i<6;i++)buddy.equippedSlots[i]=gear[i];
@@ -94,7 +100,7 @@ int main(){
   buddy.units=units;openJournalScreen(RECORDS_SCREEN);
   for(int i=0;i<4;i++){char name[32];snprintf(name,sizeof(name),"records-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
   openJournalScreen(JOURNAL_SCREEN);
-  for(int i=0;i<5;i++){char name[32];snprintf(name,sizeof(name),"journal-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
+  for(int i=0;i<10;i++){char name[32];snprintf(name,sizeof(name),"journal-%u-%d",uint8_t(units),i);snapshot(name);handleJournalButtons(true,false,false);}
  }
 
  buddy.setupComplete=true;assert(!beginBuddySetup());

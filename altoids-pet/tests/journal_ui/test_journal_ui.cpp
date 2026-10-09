@@ -47,7 +47,8 @@ int main() {
  nextPage();assert(shown("NO OBSERVATIONS YET"));
  nextPage();assert(shown("NO OBSERVATIONS YET"));
  nextPage();assert(shown("CLEAR") && shown("CLOUDY") && discoveryDots==0);
- nextPage();assert(shown("RAIN") && shown("FOG"));nextPage();assert(shown("SUMMARY 1/5"));
+ nextPage();assert(shown("RAIN") && shown("FOG"));nextPage();assert(shown("SEVERE WEATHER") && shown("--"));
+ for(int i=0;i<5;++i)nextPage();assert(shown("SUMMARY 1/10"));
  assert(nvsWrites==writes);unsigned pushes=framePushes;
  for(int i=0;i<50;i++){fakeMillis+=250;updateJournalScreens();}assert(framePushes==pushes);
  assert(handleJournalButtons(false,false,true));assert(currentScreen==MENU && menuIndex==2);

@@ -11,6 +11,9 @@ struct Print {
   std::string output;
   size_t write(uint8_t c) { output+=char(c); return 1; }
   size_t write(const uint8_t *s,size_t n) { output.append((const char*)s,n); return n; }
+  template<class T> void print(T value) {char s[64];snprintf(s,sizeof(s),"%lld",(long long)value);output+=s;}
+  void print(const char *s) {output+=s;}
+  template<class T> void println(T value) { print(value); output+='\n'; }
   void println() { output+='\n'; }
   void println(const char *s) { output+=s; output+='\n'; }
 };

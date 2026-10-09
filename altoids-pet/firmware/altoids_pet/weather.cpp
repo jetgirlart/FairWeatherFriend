@@ -1,9 +1,9 @@
+#include "field_events.h"
 #include "weather.h"
 #include "journal.h"
 #include "weather_observation.h"
 #include "measurement_units.h"
-#include "display.h"
-#include "config.h"
+#include <config.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -463,7 +463,12 @@ bool fetchWeather() {
 
   // Only this successful LIVE fetch can create journal progress. RTC restore
   // and failed fetches never call it. Keep existing fetch/cache/UI semantics.
-  if (timeValid) recordWeatherObservation(observation);
+  if (timeValid) {
+    if (recordWeatherObservation(observation)) {
+      doc.clear(); payload = String(); // Release normal response before supplemental fetch.
+      checkLiveFieldEvents(configuredLatitude(), configuredLongitude(), observation.timestamp);
+    }
+  }
   else Serial.println("Live observation skipped: invalid clock.");
 
   return true;

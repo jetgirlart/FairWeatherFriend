@@ -45,3 +45,8 @@ bool latestJournalMetric(MetricId id, int32_t &value);
 bool journalRecord(RecordId id, WeatherRecord &record);
 
 bool latestJournalTemperature(int32_t &milliC);
+
+// Supplemental alert batch commits once; these queries are future gear reward hooks.
+bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries);
+FieldEventId takeNewFieldEvent();
+bool discoveredFieldEvent(FieldEventId id);

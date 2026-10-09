@@ -21,7 +21,8 @@ constexpr size_t COMMON_PAYLOAD_BYTES = 144;
 constexpr size_t V2_PAYLOAD_BYTES = COMMON_PAYLOAD_BYTES + 4 * GEAR_SLOT_COUNT;
 constexpr size_t V3_PAYLOAD_BYTES = V2_PAYLOAD_BYTES + 8;
 constexpr size_t V4_PAYLOAD_BYTES = V3_PAYLOAD_BYTES + 20;
-constexpr size_t PAYLOAD_BYTES = V4_PAYLOAD_BYTES + 24 + 12 * RECORD_COUNT;
+constexpr size_t V5_PAYLOAD_BYTES = V4_PAYLOAD_BYTES + 24 + 12 * RECORD_COUNT;
+constexpr size_t PAYLOAD_BYTES = V5_PAYLOAD_BYTES + 20 * FIELD_EVENT_COUNT + 16 * RECENT_ALERT_COUNT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 uint64_t generation = 0;
@@ -69,6 +70,11 @@ void encodeCurrent(const BuddySaveData &s, uint8_t *p) {
   for (int32_t value : s.latestMetrics.values) put32(p, value);
   for (const auto &record : s.records) { put32(p, record.value); put64(p, record.timestamp); }
 }
+// v6 appends compact events and bounded alert fingerprints.
+void encodeEvents(const BuddySaveData &s, uint8_t *p) {
+  for (const auto &event : s.fieldEvents) { put32(p, event.count); put64(p, event.firstAt); put64(p, event.latestAt); }
+  for (const auto &alert : s.recentAlerts) { put64(p, alert.hash); put64(p, alert.seenAt); }
+}
 // Reconstruct the exact v1 payload for verifying old JSON checksums.
 uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   uint8_t bytes[V1_PAYLOAD_BYTES];
@@ -78,7 +84,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -93,6 +99,10 @@ uint32_t v3Checksum(const BuddySaveData &s) {
 uint32_t v4Checksum(const BuddySaveData &s) {
   uint8_t bytes[PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 4;
   encodeCurrent(old, bytes); return hashBytes(bytes, V4_PAYLOAD_BYTES);
+}
+uint32_t v5Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V5_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 5;
+  encodeCurrent(old, bytes); return hashBytes(bytes, sizeof(bytes));
 }
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
   if (length != payloadSize(version)) return false;
@@ -143,13 +153,17 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
     for (auto &value : s.latestMetrics.values) value = int32_t(get32(p));
     for (auto &record : s.records) { record.value = int32_t(get32(p)); record.timestamp = get64(p); }
   }
+  if (version >= 6) {
+    for (auto &event : s.fieldEvents) { event.count = get32(p); event.firstAt = get64(p); event.latestAt = get64(p); }
+    for (auto &alert : s.recentAlerts) { alert.hash = get64(p); alert.seenAt = get64(p); }
+  }
   return validateBuddySave(s);
 }
 // Supported payloads decode explicitly into the current slot model.
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case 4: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case 5: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -166,7 +180,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -279,6 +293,19 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  for (const auto &event : s.fieldEvents) {
+    if (event.count == 0) { if (event.firstAt != 0 || event.latestAt != 0) return false; }
+    else if (s.totalObservations == 0 || event.firstAt <= 0 || event.firstAt < s.createdAt ||
+             event.latestAt < event.firstAt || event.latestAt > s.latestObservationAt) return false;
+  }
+  for (uint8_t i = 0; i < RECENT_ALERT_COUNT; ++i) {
+    const auto &alert = s.recentAlerts[i];
+    if (alert.hash == 0) { if (alert.seenAt != 0) return false; }
+    else {
+      if (s.totalObservations == 0 || alert.seenAt <= 0 || alert.seenAt < s.createdAt || alert.seenAt > s.latestObservationAt) return false;
+      for (uint8_t j = 0; j < i; ++j) if (s.recentAlerts[j].hash == alert.hash) return false;
+    }
+  }
   if (s.latestMetrics.validMask & ~31UL) return false;
   for (uint8_t i = 0; i < METRIC_COUNT; ++i) {
     bool present = s.latestMetrics.has(static_cast<MetricId>(i));
@@ -339,7 +366,7 @@ bool validateBuddySave(const BuddySaveData &s) {
 }
 
 uint32_t buddySaveChecksum(const BuddySaveData &data) {
-  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes);
+  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES);
   return hashBytes(bytes, sizeof(bytes));
 }
 
@@ -383,7 +410,7 @@ bool persistBuddySave(const BuddySaveData &data) {
   uint8_t *p = bytes;
   uint64_t next = generation + 1;
   put32(p, SAVE_MAGIC); put32(p, data.saveVersion); put32(p, PAYLOAD_BYTES); put64(p, next);
-  p += 4; encodeCurrent(data, bytes + HEADER_BYTES);
+  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES);
   uint32_t checksum = hashBytes(bytes + HEADER_BYTES, PAYLOAD_BYTES, hashBytes(bytes, 20));
   p = bytes + 20; put32(p, checksum);
   Preferences prefs;
@@ -440,6 +467,18 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
   JsonObject slots = doc["equippedSlots"].to<JsonObject>();
   for (uint8_t i = 0; i < GEAR_SLOT_COUNT; ++i)
     slots[gearSlotName(static_cast<GearSlot>(i))] = static_cast<uint8_t>(s.equippedSlots[i]);
+  JsonArray events = doc["fieldEvents"].to<JsonArray>();
+  for (uint8_t i = 0; i < FIELD_EVENT_COUNT; ++i) {
+    JsonObject e = events.add<JsonObject>(); const auto &record = s.fieldEvents[i];
+    e["id"] = i; e["name"] = fieldEventName(FieldEventId(i)); e["discovered"] = record.count > 0;
+    e["count"] = record.count; e["firstAt"] = record.firstAt; e["latestAt"] = record.latestAt;
+  }
+  JsonArray recent = doc["recentAlerts"].to<JsonArray>();
+  for (const auto &alert : s.recentAlerts) {
+    JsonArray a = recent.add<JsonArray>();
+    char hash[17]; snprintf(hash, sizeof(hash), "%016llx", (unsigned long long)alert.hash);
+    a.add(hash); a.add(alert.seenAt);
+  }
   char checksum[9]; snprintf(checksum, sizeof(checksum), "%08lx", static_cast<unsigned long>(buddySaveChecksum(s)));
   doc["checksum"] = checksum;
   if (doc.overflowed()) return false;
@@ -448,7 +487,7 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
 
 bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, const char *&error) {
   error = "Invalid JSON";
-  if (!json || length == 0 || length > 4096) { error = "Import must be 1-4096 bytes"; return false; }
+  if (!json || length == 0 || length > BUDDY_IMPORT_BYTES) { error = "Import must be 1-8192 bytes"; return false; }
   JsonDocument doc;
   if (deserializeJson(doc, json, length, DeserializationOption::NestingLimit(4))) return false;
   if (!doc.is<JsonObject>()) return false;
@@ -546,6 +585,30 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       s.records[i].value = record["value"].as<int32_t>(); s.records[i].timestamp = record["timestamp"].as<int64_t>();
     }
   }
+  if (importedVersion >= 6) {
+    JsonArrayConst events = doc["fieldEvents"].as<JsonArrayConst>();
+    JsonArrayConst recent = doc["recentAlerts"].as<JsonArrayConst>();
+    if (events.isNull() || events.size() != FIELD_EVENT_COUNT || recent.isNull() || recent.size() > RECENT_ALERT_COUNT) return false;
+    uint32_t ids = 0;
+    for (JsonObjectConst e : events) {
+      if (e.size() != 6 || !e["id"].is<uint32_t>() || e["id"].as<uint32_t>() >= FIELD_EVENT_COUNT ||
+          !e["name"].is<const char *>() || !e["discovered"].is<bool>() || !e["count"].is<uint32_t>() ||
+          !e["firstAt"].is<int64_t>() || !e["latestAt"].is<int64_t>()) return false;
+      uint8_t id = e["id"].as<uint8_t>();
+      if ((ids & (1UL << id)) || strcmp(e["name"], fieldEventName(FieldEventId(id))) ||
+          e["discovered"].as<bool>() != (e["count"].as<uint32_t>() > 0)) return false;
+      ids |= 1UL << id;
+      s.fieldEvents[id] = {e["count"].as<uint32_t>(), e["firstAt"].as<int64_t>(), e["latestAt"].as<int64_t>()};
+    }
+    uint8_t i = 0;
+    for (JsonArrayConst a : recent) {
+      const char *hash = a[0].as<const char *>();
+      if (a.size() != 2 || !hash || strlen(hash) != 16 || !a[1].is<int64_t>()) return false;
+      for (uint8_t j = 0; j < 16; ++j) if (!((hash[j] >= '0' && hash[j] <= '9') || (hash[j] >= 'a' && hash[j] <= 'f'))) return false;
+      uint64_t value = strtoull(hash, nullptr, 16);
+      s.recentAlerts[i++] = {value, a[1].as<int64_t>()};
+    }
+  }
   if (!validateBuddySave(s)) { error = "Inconsistent journal, records or gear"; return false; }
   const char *text = doc["checksum"].as<const char *>();
   if (!text || strlen(text) != 8) { error = "Missing checksum"; return false; }
@@ -555,7 +618,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   data = s; error = nullptr; return true;
 }
 
@@ -579,4 +642,14 @@ bool validMetric(MetricId id, int32_t value) {
     case MetricId::PRECIPITATION: return value >= 0 && value <= 100000;
     default: return false;
   }
+}
+
+const char *fieldEventName(FieldEventId id) {
+  static const char *names[] = {
+    "Tornado Watch", "Tornado Warning", "Severe Thunderstorm Watch", "Severe Thunderstorm Warning",
+    "Flash Flood Warning", "Flood Warning", "Hurricane Watch", "Hurricane Warning",
+    "Tropical Storm Watch", "Tropical Storm Warning", "Winter Storm Warning", "Blizzard Warning",
+    "Ice Storm Warning", "Extreme Heat Warning", "Extreme Cold Warning"
+  };
+  return uint8_t(id) < FIELD_EVENT_COUNT ? names[uint8_t(id)] : "Unknown";
 }

@@ -8,7 +8,9 @@
 #include "weather.h"
 SerialType Serial;
 unsigned long fakeMillis=0;
+#ifndef FWF_NETWORK_TEST
 bool timeValid=true;
+#endif
 unsigned invalidations=0;
 #ifndef FWF_RICH_WEATHER_TEST
 void invalidateWeatherLocation(){invalidations++;}
@@ -19,6 +21,7 @@ std::map<std::string,Entries> storage;
 unsigned nvsWrites=0;
 bool failOpen=false,failWrite=false,corruptWrite=false;
 // Weather interface fake: the real mapping is preserved by the refactor.
+#ifndef FWF_NETWORK_TEST
 WeatherState mapWeatherCode(int code) {
  switch(code) {
   case 0:return WEATHER_CLEAR; case 1:return WEATHER_MAINLY_CLEAR;
@@ -28,6 +31,7 @@ WeatherState mapWeatherCode(int code) {
   default:return WEATHER_UNKNOWN;
  }
 }
+#endif
 #include "../../firmware/altoids_pet/save.cpp"
 #include "../../firmware/altoids_pet/journal.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"

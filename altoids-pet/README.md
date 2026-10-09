@@ -229,12 +229,12 @@ an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 292-byte little-endian payload. Native structs, padding, mood,
+and an explicit 1104-byte little-endian payload. Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
 
-Version 4 records (196-byte payloads) migrate to v5. Their Fahrenheit
+Version 4 records (196-byte payloads) migrate to v6. Their Fahrenheit
 high/low/latest values convert to thousandths Celsius; original displayed
 Fahrenheit precision and dates are retained. Journal counts, discoveries, gear,
 palette, setup completion, timestamps, sound, units and location survive.
@@ -242,13 +242,13 @@ Added metrics and lifetime records start unset. Versions 1–3 first receive the
 existing defaults/migrations, then the same Celsius conversion. Supported older
 JSON checksums are verified using their original Fahrenheit payload encoding.
 
-Version 3 records (176-byte payloads) migrate to version 5, preserving every
+Version 3 records (176-byte payloads) migrate to version 6, preserving every
 progress field, fur palette and setup flag. New settings default to US units,
 the `SOUND_ENABLED` config default, and the configured latitude/longitude until
 a saved location override exists. Version 2 (168 bytes) and version 1 (148 bytes)
 retain their existing palette/setup and single-item-to-slot migrations, then
 receive these settings defaults. Existing completed buddies never repeat setup.
-The newest valid generation wins across v1/v2/v3/v4/v5 records. Migration queues
+The newest valid generation wins across v1/v2/v3/v4/v5/v6 records. Migration queues
 an alternate-slot checkpoint, retaining the old record as fallback. Failed
 writes leave migration pending. Unknown/newer versions on either key block all
 writes and never reset the buddy.
@@ -397,7 +397,7 @@ are JSON null when unavailable. Metric keys encode their scale/unit; each record
 has `value` and `timestamp`. Import validates types, ranges, presence, record
 bounds, timestamps, paired pressure extrema, existing progress rules and checksum.
 Versions 1–4 remain importable with new metrics/records unset. No RTC cache is
-exported. The desktop backup utility uses the same commands and accepts v5.
+exported. The desktop backup utility uses the same commands and accepts v6.
 
 ## Settings
 
@@ -514,10 +514,10 @@ and setup state, plus settings:
 Gear IDs remain unchanged; 0 means NONE. Import requires all slots, compatible
 unlocked items, integer fur IDs 0–4, a boolean setup flag, and a matching checksum.
 Strings, missing palette fields, invalid IDs and newer versions are rejected
-without writes. Version 1/2/3/4 backups remain supported: their original byte-format
-checksums are verified before upgrading to v5. Versions 3/4 retain fur/setup;
-versions 1/2 receive ORANGE and setup complete. All receive settings defaults.
-Versions 4/5 require valid sound/units/location fields and includes them in the
+without writes. Version 1/2/3/4/5 backups remain supported: their original byte-format
+checksums are verified before upgrading to v6. Versions 3/4/5 retain fur/setup;
+versions 1/2 receive ORANGE and setup complete. Versions 1–3 receive settings defaults.
+Versions 4/5/6 require valid sound/units/location fields and includes them in the
 checksum. Current-version backups also preserve an unfinished setup's false flag.
 
 ```text
@@ -552,7 +552,7 @@ python3 -c 'import json,sys; print("IMPORT_BUDDY "+json.dumps(json.load(sys.stdi
 
 `exportBuddy()`, `importBuddy()`, `confirmBuddyImport()`, serialization, and
 validation functions now support the settings UI. Commands use a
-fixed 4096-character line limit and consume at most 64 received bytes per loop;
+fixed 8205-byte command limit (8192 JSON bytes plus the import prefix) and consume at most 64 received bytes per loop;
 there are no blocking Serial line reads. **Normal 30-second sleep still applies**
 during transfer; complete commands/confirmation promptly or use an already
 button activity to keep the device awake. Serial activity does not change
@@ -760,7 +760,7 @@ On the physical device:
 - Run each timer preset through focus/DONE. Check large countdown, book/gear
   overlap, night sleeping pose, happy completion, sound, and sleep inhibition.
 - Export Buddy before/after upload with erase disabled. Confirm progress and
-  all six equipped slots are unchanged; v2 upgrades to v5 with ORANGE and no setup.
+  all six equipped slots are unchanged; v2 upgrades to v6 with ORANGE and no setup.
 - Test an actual online weather/NTP fetch and subsequent cached wakes; check
   Serial for resets/allocation failures while the larger canvas is allocated.
 
@@ -995,3 +995,154 @@ Confirm no trails/black flashes, and unchanged gear/blink/weather reactions,
 buttons, sunrise/sunset/moon, timer, sound, deep sleep and B wake. Compare pressure
 as surface pressure (altitude-dependent), not sea-level pressure. Wettest means
 one observation interval, not a daily total. No hardware test or upload is automatic.
+
+
+## Official severe-weather field events (firmware 0.6.0)
+
+**FairWeather Friend is NOT an emergency warning device.** Severe-event collection
+requires Wi-Fi and the user opening the buddy for an existing live weather check.
+It does not poll in the background or wake independently. Events can be missed;
+API/network failures can occur. Rely on official emergency-alert systems for safety.
+The “NEW FIELD EVENT! / RECORDED” card is a collectible journal acknowledgment,
+not an emergency notification or a substitute for official alerts.
+
+Only an accepted live Open-Meteo observation triggers the supplemental NWS check.
+The existing 60-second observation guard, provider, cache refresh interval and Wi-Fi
+shutdown remain unchanged. A cached wake never requests NWS data or collects events.
+NWS failure leaves the successful normal observation and cache intact. No alerts
+are inferred from weather codes, wind, rainfall or descriptions, and missed periods
+are never backfilled.
+
+Requests use the currently effective saved/config latitude and longitude, formatted
+to six decimals. A coarse U.S./territories prefilter skips clearly distant locations;
+it does **not** guess country boundaries. In the same live session,
+`https://api.weather.gov/points/<latitude>,<longitude>` must return a supported NWS
+forecast-zone URL before requesting
+`https://api.weather.gov/alerts/active?point=<latitude>,<longitude>`.
+For example Toronto passes the broad prefilter but fails NWS coverage validation;
+London skips NWS entirely. Unsupported locations or metadata failures skip the
+alert request cleanly. Both requests send centralized headers:
+
+```text
+User-Agent: FairWeatherFriend/0.6.0 (https://github.com/jetgirlart/FairWeatherFriend)
+Accept: application/geo+json
+```
+
+The version is generated from `FW_VERSION`, not duplicated in the client.
+See the [official NWS API documentation](https://www.weather.gov/documentation/services-web-api).
+Requests have 3-second connection/4-second stream timeouts, follow the API's
+redirects, and parse directly from HTTP/1.0 streams with ArduinoJson filters.
+Each response is bounded to 96 KiB, including unknown-length responses; alert
+snapshots over 64 entries are skipped. Only IDs and exact `properties.event`
+names are retained while parsing, and response documents are freed before saving.
+The client uses the existing prototype's unverified TLS policy; certificate
+verification remains a separate networking improvement.
+
+Stable collectible IDs / exact official event mappings:
+
+| ID | Internal ID | Official event name |
+|---:|---|---|
+| 0 | TORNADO_WATCH | Tornado Watch |
+| 1 | TORNADO_WARNING | Tornado Warning |
+| 2 | SEVERE_THUNDERSTORM_WATCH | Severe Thunderstorm Watch |
+| 3 | SEVERE_THUNDERSTORM_WARNING | Severe Thunderstorm Warning |
+| 4 | FLASH_FLOOD_WARNING | Flash Flood Warning |
+| 5 | FLOOD_WARNING | Flood Warning |
+| 6 | HURRICANE_WATCH | Hurricane Watch |
+| 7 | HURRICANE_WARNING | Hurricane Warning |
+| 8 | TROPICAL_STORM_WATCH | Tropical Storm Watch |
+| 9 | TROPICAL_STORM_WARNING | Tropical Storm Warning |
+| 10 | WINTER_STORM_WARNING | Winter Storm Warning |
+| 11 | BLIZZARD_WARNING | Blizzard Warning |
+| 12 | ICE_STORM_WARNING | Ice Storm Warning |
+| 13 | EXTREME_HEAT_WARNING | Extreme Heat Warning |
+| 14 | EXTREME_COLD_WARNING | Extreme Cold Warning |
+
+Unknown names are ignored; a watch never implies a warning or vice versa. Each
+category stores a uint32 lifetime count and UTC first/latest **encounter** epochs.
+Discovered is derived from count > 0. Seeing the same ID again does not change its
+category's count or first/latest encounter timestamps. A different alert ID of the
+same type increments the count and advances latestAt. Alert issue/expiry dates are
+not substituted for the time the buddy actually witnessed the event.
+
+Deduplication uses 64-bit FNV-1a fingerprints of `properties.id`, falling back to
+the feature's top-level `id`. Missing/empty IDs are skipped. The 32-entry cache
+stores hash + last-seen epoch in the same NVS checkpoint as event records. It
+survives power loss, migration checkpoints and current-version JSON roundtrips.
+Every cached alert present in a response is pinned before insertion; replacement
+chooses the least recently seen unpinned entry. With all 32 slots pinned, extra
+IDs are skipped rather than evicting currently active alerts. This is bounded
+recent deduplication, not an unlimited archive: a long-absent ID that has been
+evicted can eventually count again; hash collisions are also theoretically possible.
+A changed batch checkpoints once, and unchanged empty batches do not write flash.
+The normal observation keeps its existing checkpoint; NWS results use a separate
+meaningful batch checkpoint with the same retry and before-sleep policy.
+
+`SAVE_VERSION` is now 6 (1104-byte payload, 1128 bytes with envelope). Versions
+1–5 migrate without resetting any existing journal, metrics, records, discoveries,
+gears, fur, settings, location or dates. Added event records and hashes start empty.
+Existing completed buddies skip setup. Unknown/newer NVS saves remain protected.
+Export JSON adds `fieldEvents`: all 15 records with numeric id, official name,
+discovered, count, firstAt and latestAt; `recentAlerts` has 32 `[hexHash, seenAt]`
+entries, preserving slot order for checksum validation. No alert bodies are exported.
+Imports validate IDs/names, unique IDs/hashes, types, ranges, empty/discovered
+consistency, timestamps and checksum. Old supported backups migrate with empty
+events. JSON is limited to 8192 bytes, and the desktop tool permits at most 8205
+command bytes including `IMPORT_BUDDY `. On-device B confirmation remains required.
+
+Journal now has ten pages: the original five, followed by five SEVERE WEATHER
+pages with three events each. A cycles pages; C returns to menu. Unseen events
+show `--`. Each new category queues a 2.5-second HOME discovery card using the
+existing frame scheduler and one display update. Menu/setup/focus screens take
+priority. Cards do not keep the device awake or change inputs, sound or power.
+`discoveredFieldEvent(id)` and the compact records provide future reward hooks;
+no new gear or unlock rules are implemented.
+
+Modules: `field_events.h/.cpp` own mapping/collection/deduplication;
+`nws_client.cpp` owns supplemental HTTP requests; `save.h/.cpp`, `journal.h/.cpp`
+own permanent data and checkpoints; `journal_ui.h/.cpp` and the HOME entry in
+`display.cpp` compose pages/cards. No main sketch or hardware driver changes.
+
+Run the new host suites from the repository root (omit `-isystem` on Linux):
+
+```sh
+mkdir -p /tmp/fwf-test-config
+cp altoids-pet/tests/field_events/stubs/config.example.h /tmp/fwf-test-config/config.h
+for suite in field_events network; do
+  c++ -std=c++17 \
+    -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+    -I/tmp/fwf-test-config -Ialtoids-pet/tests/field_events/stubs -Ialtoids-pet/tests/weather/stubs \
+    -Ialtoids-pet/tests/journal/stubs -Ialtoids-pet/firmware/altoids_pet \
+    -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+    altoids-pet/tests/field_events/test_${suite}.cpp -o /tmp/fwf-${suite}-tests
+  /tmp/fwf-${suite}-tests
+done
+```
+
+Hardware checks after your own upload, with flash erase disabled:
+
+1. Export and keep a v5 backup first. Verify v6 retains all prior progress,
+   metric records, gear slots, fur, settings, location and research date; new
+   event pages initially show `--`, and first-run setup does not repeat.
+2. Open for an eligible live U.S. check. Serial should show normal measurements,
+   then `NWS alerts: N active` or a concise supplemental failure. No-connection
+   and zero-alert sessions should leave prior progress intact.
+3. Sleep and B-wake within the existing weather cache interval. Confirm Wi-Fi
+   stays off, no NWS diagnostics appear, and event counts remain unchanged.
+4. When a supported official alert naturally affects the configured point,
+   verify its new card and category count. After another actual live check and
+   after unplugging/reconnecting, the same ID should not increment it again.
+   A genuinely new alert increments only its exact category. Do not travel into
+   severe weather to test; controlled host fixtures cover these cases safely.
+5. Browse all ten Journal pages with one A press/release per page. Check long
+   thunderstorm labels, counts, C navigation, notification expiry and no flashes.
+6. Export/import a v6 backup with explicit B confirmation, then export again
+   and compare events/hashes. Try cancellation and malformed data; the current
+   buddy must remain intact. Restoring an old backup intentionally restores that
+   old buddy and leaves severe events empty, so keep the newer backup first.
+7. If testing alternate locations, temporarily use London (NWS skipped) and
+   Toronto (coverage lookup fails without requesting alerts), then restore your
+   normal coordinates. Confirm ordinary weather still succeeds.
+8. Recheck minute updates, pet/gear/weather animations, timer completion, sound,
+   30-second inactivity sleep and B wake. Focus mode must not be interrupted by
+   a queued discovery card.

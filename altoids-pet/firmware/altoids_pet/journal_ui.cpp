@@ -80,12 +80,12 @@ void noObservations() {
   centered(80, "live weather fetch");
 }
 void drawJournal() {
-  beginScreen("JOURNAL");
+  beginScreen(journalPage >= 5 ? "SEVERE WEATHER" : "JOURNAL");
   if (!unavailable()) {
     const BuddySaveData &data = getBuddySave();
     char text[32];
     if (journalPage == 0) {
-      textAt(4, 27, "SUMMARY 1/5");
+      textAt(4, 27, "SUMMARY 1/10");
       centered(39, "OBSERVATIONS");
       snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.totalObservations));
       centered(50, text, 2);
@@ -99,7 +99,7 @@ void drawJournal() {
       formatDate(data.createdAt, text, sizeof(text));
       textAt(4, 99, text);
     } else if (journalPage == 1 || journalPage == 2) {
-      textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/5" : "AIR & WIND 3/5");
+      textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/10" : "AIR & WIND 3/10");
       if (data.totalObservations == 0) noObservations();
       else {
         if (journalPage == 1) {
@@ -115,8 +115,8 @@ void drawJournal() {
           formatDate(data.latestObservationAt, text, sizeof(text), true); centered(98, text);
         }
       }
-    } else {
-      snprintf(text, sizeof(text), "WEATHER %u/5", unsigned(journalPage + 1));
+    } else if (journalPage < 5) {
+      snprintf(text, sizeof(text), "WEATHER %u/10", unsigned(journalPage + 1));
       textAt(4, 25, text);
       uint8_t first = (journalPage - 3) * 4;
       for (uint8_t row = 0; row < 4; ++row) {
@@ -127,6 +127,22 @@ void drawJournal() {
         else display.drawCircle(224, y * 2 + 6, 3, COLOR_MUTED);
         snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.weatherCounts[category]));
         centered(y + 9, text);
+      }
+    }
+    if (journalPage >= 5) {
+      // Three events/page, labels split into two lines at a word boundary.
+      snprintf(text, sizeof(text), "FIELD EVENTS %u/10", journalPage + 1); centered(20, text);
+      for (uint8_t row = 0; row < 3; ++row) {
+        uint8_t id = (journalPage - 5) * 3 + row;
+        const char *name = fieldEventName(FieldEventId(id));
+        char label[40]; snprintf(label, sizeof(label), "%s", name);
+        char *split = strrchr(label, ' '); if (split) *split++ = 0;
+        int y = 33 + row * 25;
+        centered(y, label); if (split) centered(y + 8, split);
+        const auto &event = data.fieldEvents[id];
+        if (event.count) snprintf(text, sizeof(text), "%lu", (unsigned long)event.count);
+        else snprintf(text, sizeof(text), "--");
+        centered(y + 16, text);
       }
     }
     centered(111, "A:NEXT C:MENU");
@@ -231,7 +247,7 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
   bool redraw = false;
   if (aPressed) {
     if (currentScreen == RECORDS_SCREEN) { recordsPage = (recordsPage + 1) % 4; redraw = true; }
-    if (currentScreen == JOURNAL_SCREEN) { journalPage = (journalPage + 1) % 5; redraw = true; }
+    if (currentScreen == JOURNAL_SCREEN) { journalPage = (journalPage + 1) % 10; redraw = true; }
     if (currentScreen == GEAR_SCREEN && journalAvailable()) {
       if (!choosingItem) selectedSlot = static_cast<GearSlot>((static_cast<uint8_t>(selectedSlot) + 1) % GEAR_SLOT_COUNT);
       else {
@@ -263,4 +279,23 @@ void updateJournalScreens() {
     equipmentSaveFailed = false;
     drawCurrent(); // Imports/creation-date capture can change an open screen.
   }
+}
+
+// Called inside the existing HOME frame scheduler; no separate display update,
+// polling, sleep override, or input mode. Timer/setup/menu screens take priority.
+bool drawFieldEventNotification() {
+  static FieldEventId showing = FieldEventId::COUNT;
+  static unsigned long started = 0;
+  if (showing != FieldEventId::COUNT && millis() - started >= 2500) showing = FieldEventId::COUNT;
+  if (showing == FieldEventId::COUNT) {
+    showing = takeNewFieldEvent(); started = millis();
+    if (showing == FieldEventId::COUNT) return false;
+  }
+  display.clearDisplay(); display.setTextColor(COLOR_TEXT);
+  centered(20, "NEW FIELD EVENT!");
+  char label[40]; snprintf(label, sizeof(label), "%s", fieldEventName(showing));
+  char *split = strrchr(label, ' '); if (split) *split++ = 0;
+  centered(48, label); if (split) centered(61, split);
+  centered(85, "RECORDED");
+  return true;
 }
