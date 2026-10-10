@@ -13,6 +13,9 @@ struct SpritePalette { uint16_t outline, primary, accent, detail; };
 const SpritePalette &furPalette(FurPaletteId id);
 
 // RGB565: a dark field, warm paper/fox, cool environment, muted clothing.
+// Semantic roles run from black outline through medium/light tones to white.
+constexpr uint16_t COLOR_OUTLINE = 0x0000;
+constexpr uint16_t COLOR_DETAIL = 0xFFFF;
 constexpr uint16_t COLOR_BACKGROUND = 0x0841;
 constexpr uint16_t COLOR_TEXT = 0xEF3B;
 constexpr uint16_t COLOR_WARM = 0xEDEA;

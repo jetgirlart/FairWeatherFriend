@@ -1,4 +1,5 @@
-#pragma once
+#ifndef FWF_SPRITES_H
+#define FWF_SPRITES_H
 #include <Arduino.h>
 #include "palette.h"
 
@@ -33,3 +34,10 @@ void drawColoredKitsune(const uint8_t *frame, int x, int y, FurPaletteId palette
                         uint8_t earOffset = 0, bool crouching = false);
 
 void drawPaletteGearSprite(const uint8_t *bitmap, int x, int y, const SpritePalette &palette, bool patterned, bool crouch, int offsetY = 0);
+
+// Generic packed-role renderer for source buddy/gear PNGs. SECONDARY maps to
+// palette.accent; transparency writes nothing. Gear callers pass gearVariantPalette.
+void drawPackedPaletteSprite(const uint8_t *frame, int x, int y, const SpritePalette &palette,
+                             uint8_t earOffset = 0, bool crouching = false, int pixelOffsetY = 0);
+
+#endif // FWF_SPRITES_H

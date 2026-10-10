@@ -44,15 +44,16 @@ void drawRoleSprite(const uint8_t *roles, int x, int y, const SpritePalette &pal
     if (role > 0 && role <= 4) pixel(x, y, i % 48, i / 48, colors[role], ear, crouch);
   }
 }
-void drawColoredKitsune(const uint8_t *frame, int x, int y, FurPaletteId palette, uint8_t ear, bool crouch) {
-  const auto &selected = furPalette(palette);
-  const uint16_t colors[] = {0, selected.outline, selected.primary, selected.accent, selected.detail};
-  // Decode directly from flash: no role-map allocation or flood-fill inference.
+void drawPackedPaletteSprite(const uint8_t *frame, int x, int y, const SpritePalette &palette, uint8_t ear, bool crouch, int offsetY) {
+  const uint16_t colors[] = {0, palette.outline, palette.primary, palette.accent, palette.detail};
   for (int i = 0; i < KITSUNE_PIXEL_COUNT; ++i) {
     uint8_t packed = pgm_read_byte(frame + i / 2);
     uint8_t role = i % 2 ? packed & 15 : packed >> 4;
-    if (role > 0 && role <= 4) pixel(x, y, i % 48, i / 48, colors[role], ear, crouch);
+    if (role > 0 && role <= 4) pixel(x, y, i % 48, i / 48, colors[role], ear, crouch, offsetY);
   }
+}
+void drawColoredKitsune(const uint8_t *frame, int x, int y, FurPaletteId palette, uint8_t ear, bool crouch) {
+  drawPackedPaletteSprite(frame, x, y, furPalette(palette), ear, crouch);
 }
 
 void drawPaletteGearSprite(const uint8_t *bitmap, int x, int y, const SpritePalette &palette, bool patterned, bool crouch, int offsetY) {

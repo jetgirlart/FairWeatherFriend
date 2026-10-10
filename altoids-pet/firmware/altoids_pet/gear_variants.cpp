@@ -36,16 +36,16 @@ const VariantRule variantRules[] = {
  {GearId::FIELD_CAP,3,Milestone::EVENT,1,FieldEventId::EXTREME_HEAT_WARNING},
  {GearId::SUNGLASSES,3,Milestone::EVENT,1,FieldEventId::EXTREME_HEAT_WARNING}
 };
-// RGB565 primary/accent colors, independent of the one existing bitmap per item.
-// Original/default colors are resolved from the existing rendering palette.
+// Medium primary / light secondary tones; outline and white detail are shared.
+// Stable variant IDs/names and unlock rules are unchanged.
 const uint16_t colors[GEAR_ITEM_COUNT][MAX_GEAR_VARIANTS][2] GEAR_FLASH = {
- {{0,0},{0x65C8,0xC6B6},{0x4295,0x9D7C},{0xFFE0,0xFFFF},{0,0}},
- {{0,0},{0x4C9F,0xFFFF},{0xF986,0xFFFF},{0xFD40,0xFFE0},{0,0}},
- {{0,0},{0x4C9F,0xFFFF},{0xF986,0xFFFF},{0xF986,0x4FEA},{0xFFE0,0xFD40}},
- {{0,0},{0x4C9F,0xFFFF},{0xF986,0xFFFF},{0x5AD6,0x9D7C},{0x4295,0xFFE0}},
- {{0,0},{0x4C9F,0xFFFF},{0xF986,0xFFFF},{0xFFFF,0x4C9F},{0,0}},
- {{0,0},{0x65C8,0xFFFF},{0xFFFF,0xAD55},{0xFFFF,0x4C9F},{0,0}},
- {{0,0},{0xFFE0,0xFD40},{0x4FEA,0x4C9F},{0,0},{0,0}}
+ {{0x7BEF,0xCE79},{0x65C8,0xC6B6},{0x4295,0x9D7C},{0xCDE0,0xFFB5},{0,0}},
+ {{0x7BEF,0xDEDB},{0x4C9F,0xCEFF},{0xD945,0xFEB8},{0xCBA0,0xFFB5},{0,0}},
+ {{0x43F2,0xC6FA},{0x4C9F,0xCEFF},{0xD945,0xFEB8},{0xD945,0xC776},{0xCDE0,0xFFB5}},
+ {{0x43F2,0xC6FA},{0x4C9F,0xCEFF},{0xD945,0xFEB8},{0x5AD6,0xBE7D},{0x4295,0xEF95}},
+ {{0xBC0B,0xF73A},{0x4C9F,0xCEFF},{0xD945,0xFEB8},{0x7C97,0xDEFF},{0,0}},
+ {{0x7BEF,0xDEDB},{0x65C8,0xC6B6},{0xAD55,0xEF7D},{0x7C97,0xDEFF},{0,0}},
+ {{0x7BEF,0xCE79},{0xCDE0,0xFFB5},{0x3BA9,0xBEBB},{0,0},{0,0}}
 };
 }
 uint8_t gearVariantCount(GearId gear) {
@@ -80,15 +80,14 @@ void evaluateGearVariants(BuddySaveData &data) {
  }
 }
 SpritePalette gearVariantPalette(GearId gear,uint8_t variant) {
- if(variant>=gearVariantCount(gear))return {COLOR_BACKGROUND,COLOR_TEXT,COLOR_TEXT,COLOR_TEXT};
- if(!variant){uint16_t color=petPalette.gear[uint8_t(gear)];return {COLOR_BACKGROUND,color,color,color};}
+ if(variant>=gearVariantCount(gear))return {COLOR_OUTLINE,0x7BEF,0xDEDB,COLOR_DETAIL};
  #ifdef ARDUINO
  uint16_t primary=pgm_read_word(&colors[uint8_t(gear)-1][variant][0]);
  uint16_t accent=pgm_read_word(&colors[uint8_t(gear)-1][variant][1]);
  #else
  uint16_t primary=colors[uint8_t(gear)-1][variant][0], accent=colors[uint8_t(gear)-1][variant][1];
  #endif
- return {COLOR_BACKGROUND,primary,accent,accent};
+ return {COLOR_OUTLINE,primary,accent,COLOR_DETAIL};
 }
 bool patternedGearVariant(GearId gear,uint8_t variant){return variant>=2 &&
  (gear==GearId::WINTER_SCARF || variant>=3 || (gear==GearId::BOOTS && variant==2));}

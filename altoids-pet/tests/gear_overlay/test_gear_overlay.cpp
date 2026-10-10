@@ -5,6 +5,7 @@
 #include "pet.h"
 #include "weather.h"
 #include "gear_sprites.h"
+#include "generated/gear_assets.h"
 SerialType Serial;
 PetPalette petPalette;
 unsigned long fakeMillis=0;
@@ -61,12 +62,52 @@ void expectedItem(std::vector<uint16_t>&out,GearId gear,int x,int y,bool lifted=
  for(auto item:items)if(item.id==gear){
   if(gear==GearId::UMBRELLA){x+=72;y-=18;}
   if(gear==GearId::BOOTS && lifted)y-=2;
+  const uint8_t *packed=gear==GearId::FIELD_CAP?PNG_GEAR_FIELD_CAP_ROLES:
+                         gear==GearId::SUNGLASSES?PNG_GEAR_SUNGLASSES_ROLES:nullptr;
+  if(packed){
+   auto palette=gearVariantPalette(gear,0);
+   const uint16_t colors[]={0,palette.outline,palette.primary,palette.accent,palette.detail};
+   for(int sy=0;sy<48;sy++)for(int sx=0;sx<48;sx++){
+    int i=sy*48+sx;uint8_t role=i%2?packed[i/2]&15:packed[i/2]>>4;
+    if(role)for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)out[(y+2*sy+dy)*240+x+2*sx+dx]=colors[role];
+   }
+   return;
+  }
   expectedMask(out,item.mask,x,y,COLOR_BACKGROUND);
-  expectedMask(out,item.art,x,y,petPalette.gear[static_cast<uint8_t>(gear)]);
+  expectedMask(out,item.art,x,y,gearVariantPalette(gear,0).primary);
  }
 }
 void checkPixels(const std::vector<uint16_t>&expected){assert(memcmp(expected.data(),pixels,sizeof(pixels))==0);}
+unsigned brightness(uint16_t color){
+ unsigned r=((color>>11)&31)*255/31,g=((color>>5)&63)*255/63,b=(color&31)*255/31;
+ return 2126*r+7152*g+722*b;
+}
+void checkRoleOrder(const SpritePalette &palette){
+ assert(palette.outline==0x0000 && palette.detail==0xFFFF);
+ assert(brightness(palette.outline)<brightness(palette.primary));
+ assert(brightness(palette.primary)<brightness(palette.accent));
+ assert(brightness(palette.accent)<brightness(palette.detail));
+}
 int main(){
+ for(uint8_t id=0;id<FUR_PALETTE_COUNT;id++)checkRoleOrder(furPalette(static_cast<FurPaletteId>(id)));
+ for(auto item:items)for(uint8_t variant=0;variant<gearVariantCount(item.id);variant++)checkRoleOrder(gearVariantPalette(item.id,variant));
+ checkRoleOrder(gearVariantPalette(GearId::NONE,255));
+ // Active PNG gear layers use the same semantic colors and pixel transform.
+ const GearId pngItems[]={GearId::FIELD_CAP,GearId::SUNGLASSES};
+ const uint8_t *pngFrames[]={PNG_GEAR_FIELD_CAP_ROLES,PNG_GEAR_SUNGLASSES_ROLES};
+ for(unsigned asset=0;asset<2;asset++)for(uint8_t variant=0;variant<gearVariantCount(pngItems[asset]);variant++){
+  for(auto &value:pixels)value=COLOR_WARM;
+  setSpriteOrigin(72,56);const auto &palette=gearVariantPalette(pngItems[asset],variant);
+  assert(palette.detail==0xFFFF);
+  drawPackedPaletteSprite(pngFrames[asset],0,16,palette,0,false,-2);
+  const uint16_t expected[]={COLOR_WARM,palette.outline,palette.primary,palette.accent,palette.detail};
+  for(int y=0;y<96;y++)for(int x=0;x<96;x++){
+   int index=(y/2)*48+x/2;uint8_t packed=pngFrames[asset][index/2];
+   uint8_t role=index%2?packed&15:packed>>4;
+   assert(pixels[(78+y)*240+72+x]==expected[role]);
+  }
+  assert(pixels[77*240+72]==COLOR_WARM); // Transparent/offset pixels do not erase the base.
+ }
  initializePetState();initializeAnimations();
  for(auto item:items){
   rest();for(auto &slot:data.equippedSlots)slot=GearId::NONE;
@@ -102,13 +143,15 @@ int main(){
   if(action==IdleAction::SNOW_SHIVER)drawWeatherGear(GearId::WINTER_SCARF,x,y+16);
   assert(actual==std::vector<uint16_t>(pixels,pixels+240*240));
  }
- // Glasses leave every expression's pupil region untouched, including extreme looks.
+ // PNG transparency preserves each expression; opaque pixels use exact palette roles.
  for(auto frame:{KITSUNE_IDLE,KITSUNE_BLINK,KITSUNE_LOOK_LEFT,KITSUNE_LOOK_RIGHT,KITSUNE_SLEEP,KITSUNE_FOCUS}){
   rest();display.clearDisplay();drawColoredKitsune(frame,0,16,data.furPalette);
-  std::vector<uint16_t> before(pixels,pixels+240*240);drawGearItem(GearId::SUNGLASSES,0,16,false,false);
-  for(int y=19;y<=24;y++)for(int x:{11,12,13,14,15,16,26,27,28,29,30,31})
-   for(int dy=0;dy<2;dy++)for(int dx=0;dx<2;dx++)assert(pixels[(80+y*2+dy)*240+72+x*2+dx]==before[(80+y*2+dy)*240+72+x*2+dx]);
+  std::vector<uint16_t> expected(pixels,pixels+240*240);
+  expectedItem(expected,GearId::SUNGLASSES,72,80);
+  drawGearItem(GearId::SUNGLASSES,0,16,false,false);checkPixels(expected);
  }
+ for(uint8_t id=0;id<FUR_PALETTE_COUNT;id++)assert(furPalette(static_cast<FurPaletteId>(id)).detail==0xFFFF);
+ assert(gearVariantPalette(GearId::NONE,255).detail==0xFFFF);
  // Weather reaction draws one matching prop and restores equipped art afterward.
  rest();weatherState=reactionWeather=WEATHER_RAIN;idleAction=IdleAction::UMBRELLA;idleStep=1;
  display.clearDisplay();drawPet(0,0,false,false);std::vector<uint16_t> reaction(pixels,pixels+240*240);
@@ -134,5 +177,5 @@ int main(){
    assert(changed);
   }
  }
- puts("PASS: native gear masks/transparency/2x scaling, independent layer order, home/focus/DONE/sleep, all palettes and idle poses, gaze through glasses, shared weather accessories, protected saves and unchanged animation cadence.");
+ puts("PASS: native gear masks/transparency/2x scaling, independent layer order, home/focus/DONE/sleep, all palettes and idle poses, authored PNG glasses and white DETAIL, shared weather accessories, protected saves and unchanged animation cadence.");
 }

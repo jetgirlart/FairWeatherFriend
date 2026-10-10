@@ -203,3 +203,77 @@ and checksums. No Python dependency, protocol or size-limit change is needed.
 Older supported backups reconstruct only provable milestones, quietly; their
 original threshold dates are unknown, so reconstructed awards use their latest
 saved observation time. Keep a current backup before restoring older progress.
+
+## PNG sprite conversion
+
+From the repository root:
+
+```sh
+python3 tools/convert_sprites.py
+python3 tools/convert_sprites.py --check
+python3 -m unittest discover -s tools/tests -q
+```
+
+This converter needs Python 3 and **no external dependency**. It reads source
+artwork under `altoids-pet/assets/buddy/` and `altoids-pet/assets/gear/`, and writes
+`altoids-pet/firmware/altoids_pet/generated/buddy_assets.inc` and `gear_assets.h`.
+`--check` validates sources and fails if generated files are missing/stale without
+writing anything. Paths default relative to this script, independent of the
+working directory. `--project-root <directory>` is available for isolated tests.
+
+Sources must be exactly **48x48, 8-bit RGBA PNG**. Both ordinary and Adam7 PNGs and
+all standard PNG row filters are supported. RGB-only, indexed, grayscale, 16-bit,
+animated, corrupt or truncated PNGs fail loudly. The tool checks PNG chunk CRCs
+and bounded compressed data (source limit 1 MiB). No resizing, anti-aliasing,
+gamma/profile conversion or approximate palette matching is performed.
+
+| Source pixel | Encoded role |
+| --- | --- |
+| Alpha 0, any hidden RGB | 0 / transparent |
+| Opaque `#1A1A1A` | 1 / OUTLINE |
+| Opaque `#FF00FF` | 2 / PRIMARY |
+| Opaque `#00FFFF` | 3 / SECONDARY (runtime `accent`) |
+| Opaque `#00FF00` | 4 / DETAIL |
+
+Only alpha 0 and 255 are accepted. Every other alpha and every unsupported opaque
+RGB value fails with the source filename and pixel coordinate. Source PNGs are
+never written. All present registered assets validate before outputs are changed.
+Generated files have `DO NOT EDIT` banners, relative source names and source SHA256
+hashes. Their output has fixed ordering/format and no timestamps or absolute paths;
+unchanged content is not rewritten. Commit the generated files with source changes.
+
+Required: `assets/buddy/kitsune_idle.png`. Optional buddy files:
+`kitsune_blink.png`, `kitsune_look_left.png`, `kitsune_look_right.png`,
+`kitsune_happy.png`, `kitsune_sleepy.png`, `kitsune_sleep.png`, `kitsune_focus.png`.
+The existing EXCITED, BOUNCE and LOOK_UP frames can also be replaced through
+`kitsune_excited.png`, `kitsune_bounce.png`, `kitsune_look_up.png`. Missing optional
+sources emit no replacement, so their original embedded firmware frames remain.
+Removing an optional PNG and regenerating restores that frame's fallback. IDLE
+is required; removing it fails instead of silently reverting.
+
+The gear registry accepts `field_cap.png`, `sunglasses.png`, `umbrella.png`,
+`raincoat.png`, `winter_scarf.png`, `winter_coat.png`, `boots.png`. Gear assets use
+exactly the same roles. Cap and sunglasses PNGs replace their embedded overlays
+when present; missing sources retain the legacy fallback. Other registered gear
+is converted in preparation for later renderer integration. The PNG renderer uses
+`gearVariantPalette`, preserves transparent pixels without applying a legacy mask,
+and shares the existing pet origin, offsets, crouch transform and layering.
+DETAIL (`#00FF00` in source artwork) maps to pure white (`0xFFFF`) in every fur
+and gear palette; PRIMARY and SECONDARY retain their selected palette colors.
+Do not infer gear occlusion masks from alpha or copy the buddy into gear artwork.
+Unknown filenames are not part of the registry and are not converted.
+
+Each frame is **1152 PROGMEM bytes**: 2304 roles packed row-major, two 4-bit values
+per byte (left pixel in the high nibble). The selected fur/gear palette supplies
+RGB565 colors at render time. This matches the established buddy representation,
+with crisp 2x rendering and no extra framebuffer/display update. Generated buddy
+arrays retain their existing `KITSUNE_*` symbols. Presence macros disable only
+matching fallback definitions in `kitsune_assets.cpp`, so there are no duplicate
+frames in flash and no animation/state-selection edits. Arduino compiles the
+checked-in generated data through that translation unit; conversion is a separate
+host command to run before building after artwork changes.
+
+Sprite palette brightness is ordered consistently: OUTLINE is black (`0x0000`),
+PRIMARY is a medium tone, SECONDARY/ACCENT is a lighter tone, and DETAIL is white
+(`0xFFFF`). Source marker colors select these roles; they are not literal display
+colors. The same ordering applies to every fur palette and gear variant.

@@ -623,19 +623,18 @@ BOUNCE, LOOK_UP and FOCUS. The existing state machine selects these assets;
 FOCUS adds a quiet inward-paw reading pose beneath the separate book. Sleep,
 blink, mood and reaction precedence remain unchanged.
 
-To replace a frame, edit its named initializer in `kitsune_assets.cpp`, keeping
-48×48 dimensions and the role encoding above. Row comments show `.OFAD` roles.
-Keep head/neck/feet anchors aligned across frames. Alternatively edit the
-standard-library-only authoring script and regenerate both dedicated asset files:
+Final replacement frames now come from authoritative 48×48 RGBA PNGs. Add the
+matching file under `assets/buddy/` and run:
 
 ```sh
-python3 altoids-pet/assets/sprites/generate_kitsune.py
+python3 tools/convert_sprites.py
 ```
 
-Regeneration overwrites `kitsune_assets.cpp` and `gear_sprites.cpp`, so retain
-manual art changes in the generator if using that workflow. No animation or
-save logic changes are needed to replace artwork. Umbrella, scarf, book and
-hearts remain separate overlays.
+See [the PNG pipeline](#authoritative-png-sprite-pipeline) for exact semantic colors
+and filenames. Missing optional PNGs retain these legacy frames. The old
+`assets/sprites/generate_kitsune.py` remains a fallback-development tool and keeps
+PNG selection guards when regenerating. Gear, book and hearts remain separate
+overlays; artwork changes need no animation or save logic changes.
 
 TIMER still offers 5/10/15/25 minutes: A selects, B starts, C backs out/cancels;
 C on DONE returns home. Running focus prevents normal inactivity sleep. Countdown,
@@ -1670,3 +1669,86 @@ Physical checklist after your manual upload with flash erase disabled:
    IDs/dates and all old progress after re-export. Invalid or canceled imports
    must preserve the buddy. Restoring a supported older backup reconstructs only
    its provable achievements and retains that backup's historical progress.
+
+## Authoritative PNG sprite pipeline
+
+Final source art lives in **`assets/buddy/` and `assets/gear/`**. The first source,
+`assets/buddy/kitsune_idle.png`, now supplies `KITSUNE_IDLE` directly. Animation
+selection, native positioning, bounce/crouch/ear transforms, fur palettes, gear
+anchors, weather effects and the single-framebuffer update path are unchanged.
+Other buddy frames keep their original embedded artwork until their PNG exists.
+During incremental replacement, blinking/looking/happy/sleep/focus therefore
+switches to the existing older artwork as before; add matching PNGs to update
+those expressions individually, without editing pet logic.
+
+Run these commands from the repository root after editing artwork:
+
+```sh
+python3 tools/convert_sprites.py
+python3 tools/convert_sprites.py --check
+```
+
+The standard-library-only converter requires exactly 48x48 8-bit RGBA PNGs with
+binary alpha. Alpha zero means transparent; alpha 255 permits only `#1A1A1A`
+OUTLINE, `#FF00FF` PRIMARY, `#00FFFF` SECONDARY, `#00FF00` DETAIL. SECONDARY maps to
+runtime palette `accent`. Unsupported RGB/alpha, dimensions, format or corrupt PNG
+data cause a named error/nonzero exit, never silent color approximation. PNG
+sources are never modified. Source RGB markers are semantic, so the magenta/cyan/
+green source colors become the selected buddy's fur/accent/face colors on hardware.
+
+`firmware/altoids_pet/generated/buddy_assets.inc` and `generated/gear_assets.h`
+are **DO NOT EDIT** artifacts with deterministic formatting and source hashes.
+Buddy frames use the existing row-major two-pixels-per-byte palette representation:
+**1152 bytes per 48x48 frame**, high nibble first, stored in PROGMEM. There is no
+per-pixel RGB565 storage or added frame buffer. `kitsune_assets.cpp` includes the
+replacements and compiles out only matching fallback definitions. Adding any
+supported optional PNG and regenerating activates that exact frame automatically.
+The build consumes the checked-in generated files; run conversion before compiling
+source changes, or use `--check` to verify they match. No firmware library, version
+or save-schema change is needed.
+
+The cap and sunglasses PNGs now replace their legacy overlays using the same
+packed palette-role format, origin, offsets and layer order. Transparent pixels
+leave the base pet untouched. Removing either source and regenerating restores
+its embedded fallback. Other gear sources are converted for future integration.
+DETAIL (`#00FF00`) always renders pure white (`0xFFFF`), the lightest color, in
+all fur and gear palettes. Source PNGs are never modified.
+
+The former `assets/sprites/generate_kitsune.py` remains a developer tool for legacy
+fallbacks. Its output now retains PNG selection guards, so fallback regeneration
+cannot override available PNG frames. **Use `tools/convert_sprites.py` for final
+artwork**, not the old procedural generator or direct generated-byte edits. Full
+filenames, pixel rules, gear integration details and commands are documented in
+[`tools/README.md`](../tools/README.md#png-sprite-conversion).
+
+Host tests cover dimensions/format, exact colors/alpha, transparent hidden RGB,
+nibble ordering, all PNG filters/Adam7, corrupt streams/CRCs, deterministic outputs,
+source preservation, required IDLE/missing optional assets, failed optional
+conversion preserving prior outputs, and gear role preparation. Firmware host
+render tests cover all fur palettes, unchanged fallback expressions, transparency,
+2x pixels, active PNG gear roles through actual variant palettes and offsets,
+existing gear layering/animations, and flicker-free TFT updates.
+
+Physical checklist after your own upload:
+
+1. On HOME, verify the actual PNG IDLE silhouette, face and transparent areas,
+   crisp 2x pixels, unchanged position and no magenta/cyan/green marker colors.
+2. Preview the existing five fur palettes through the normal setup/backup flow
+   where applicable; outline, primary, secondary and detail should map correctly.
+3. Watch blink/look/happy/bounce/ear twitch and scheduled sleep. Missing replacement
+   frames should use the unchanged older artwork; all animation timing/movement
+   should remain the same. Check focus and timer-DONE expressions too.
+4. Equip caps, sunglasses, scarf, coats, boots and umbrella, including multiple
+   slots/colors. Their current anchors/layer order/masks and weather accessories
+   should behave as before around the new IDLE body. No anchor adjustments were
+   made to compensate for new art proportions.
+5. Check rain/snow/storm effects, minute changes, menu transitions and sleep/B-wake
+   for flicker or blank frames. Journal, achievements, timer, sounds and weather
+   caching should continue normally.
+6. When your next optional PNG is ready, convert/check/build, manually upload,
+   and verify that expression alone changes while other missing frames stay old.
+
+Sprite palette brightness is ordered consistently: OUTLINE is black (`0x0000`),
+PRIMARY is a medium tone, SECONDARY/ACCENT is a lighter tone, and DETAIL is white
+(`0xFFFF`). Source marker colors select these roles; they are not literal display
+colors. The same ordering applies to every fur palette and gear variant.

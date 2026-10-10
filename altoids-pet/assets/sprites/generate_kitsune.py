@@ -97,8 +97,9 @@ def asset(name,g,roles=True):
         out+='  '+', '.join(f'0x{v:02X}' for v in data)+', // '+''.join(chars[v] if roles else '#' if v else '.' for v in row)+'\n'
     return out+'};\n\n'
 
-text='#include "sprites.h"\n\n// Generated native 48x48 role maps. Two pixels per byte, left pixel in high nibble.\n// Edit a frame here, or use assets/sprites/generate_kitsune.py to regenerate.\n// Row key: . transparent, O outline, F primary fur, A accent, D facial detail.\n\n'
-for state in STATES:text+=asset('KITSUNE_'+state,kitsune(state))
+text='#include "sprites.h"\n#include "generated/buddy_assets.inc"\n\n// Legacy fallback native 48x48 role maps. Two pixels per byte, left pixel in high nibble.\n// Authoritative PNG replacements come from tools/convert_sprites.py.\n// Missing PNG frames retain these original bytes.\n// Row key: . transparent, O outline, F primary fur, A accent, D facial detail.\n\n'
+for state in STATES:
+    text+=f'#ifndef FWF_PNG_HAS_KITSUNE_{state}\n'+asset('KITSUNE_'+state,kitsune(state))+'#endif\n\n'
 (ROOT/'kitsune_assets.cpp').write_text(text)
 
 # Separate 48x48 accessory canvases; masks clear only covered geometry.
