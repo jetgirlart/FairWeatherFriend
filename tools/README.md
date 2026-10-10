@@ -194,3 +194,12 @@ checksum validation. No new command or dependency is needed. Update this tool
 alongside firmware: the command bound is now 24589 bytes (24 KiB JSON plus prefix)
 to support the larger history. Older supported backups restore empty history;
 keep a current backup before deliberately restoring an older one.
+
+
+Firmware 0.10.0/save version 10 adds the `achievements` array (stable numeric ID,
+unlocked flag and unlock epoch) to the existing buddy backup. The same export and
+import commands work; firmware validates achievement IDs, timestamps, evidence
+and checksums. No Python dependency, protocol or size-limit change is needed.
+Older supported backups reconstruct only provable milestones, quietly; their
+original threshold dates are unknown, so reconstructed awards use their latest
+saved observation time. Keep a current backup before restoring older progress.

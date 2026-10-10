@@ -103,6 +103,7 @@ altoids-pet/
 │   ├── power.cpp / power.h
 │   ├── timer.cpp / timer.h
 │   ├── sound.cpp / sound.h
+│   ├── achievements.cpp / achievements.h
 │   ├── journal.cpp / journal.h
 │   ├── journal_ui.cpp / journal_ui.h
 │   ├── settings_ui.cpp / settings_ui.h
@@ -229,7 +230,7 @@ an explicit replacement with the imported buddy's own start date.
 
 Permanent progress lives in **NVS namespace `fwf-buddy`**, keys `save0`/`save1`.
 Each record has a stable header (magic, version, length, generation, checksum)
-and an explicit 2340-byte little-endian payload (save version 9). Native structs, padding, mood,
+and an explicit 2488-byte little-endian payload (save version 10). Native structs, padding, mood,
 Wi-Fi settings, and RTC caches are not serialized. Writes alternate slots and
 are read back/verified; load selects the newest valid slot and can fall back
 from a checksum-damaged slot.
@@ -1494,3 +1495,178 @@ Hardware checklist after your own upload, with flash erase disabled:
    confirmations. Re-export and compare notes/order/checksum plus prior progress.
    Canceling or submitting invalid history must preserve the buddy. Restoring an
    older supported backup intentionally restores its progress with empty history.
+
+## Field Achievements and sound events (firmware 0.10.0, save version 10)
+
+Achievements are permanent field milestones, independent of gear rewards. There
+are no levels, XP, streaks, care meters, friendship grinding or inactivity losses.
+Names, descriptions and rules live in the flash table in `achievements.cpp`;
+only an unlocked bitmask and first-unlocked epoch timestamps are saved.
+
+| Stable ID | Enum | Requirement |
+| --- | --- | --- |
+| 0 | FIRST_NOTES | First accepted live observation |
+| 1 | FIELD_10 | 10 accepted observations |
+| 2 | FIELD_50 | 50 accepted observations |
+| 3 | FIELD_100 | 100 accepted observations |
+| 4 | WEATHER_4 | Four ordinary categories discovered |
+| 5 | WEATHER_6 | Six ordinary categories discovered |
+| 6 | WEATHER_ALL_CORE | All eight ordinary categories discovered |
+| 7 | CENTURY | Canonical temperature at least 37778 milli-Celsius (100°F) |
+| 8 | FREEZING | Canonical temperature at most 0 milli-Celsius (32°F) |
+| 9 | DEEP_FREEZE | Canonical temperature at most -17778 milli-Celsius (0°F) |
+| 10 | FIELD_SITE_3 | Three lifetime configured sites with accepted observations |
+| 11 | FIELD_SITE_5 | Five lifetime configured sites with accepted observations |
+| 12 | FIELD_SITE_8 | Eight lifetime configured sites with accepted observations |
+| 13 | FIRST_SEVERE | Any supported severe event witnessed |
+| 14 | TORNADO_WARNING_SEEN | Tornado Warning witnessed |
+| 15 | HURRICANE_WARNING_SEEN | Hurricane Warning witnessed |
+| 16 | BLIZZARD_WARNING_SEEN | Blizzard Warning witnessed |
+| 17 | FLASH_FLOOD_WARNING_SEEN | Flash Flood Warning witnessed |
+
+Temperature boundaries use canonical thousandths Celsius; changing display units
+or rounding a screen value never changes eligibility. Field-site achievements use
+the existing permanent visit counter, including deleted sites, rather than the
+number currently selected/configured. Eight visits therefore need not remain in
+eight occupied slots simultaneously. Selecting a site is still not a visit.
+`MOON_WATCHER` is deferred: the current moon phase is calculated for display, with
+no permanent moon-phase collection tracking. No new gear reward or threshold was
+added; existing gear/color rules remain independent.
+
+Evaluation runs only on the existing accepted live-observation and changed
+severe-event batch paths. It ORs new permanent bits, assigns each new timestamp
+once, and uses those same NVS checkpoints. Cached wakes, duplicate-rejected checks,
+failed weather/NWS requests and ordinary main-loop updates do not award anything.
+Multiple awards queue in a fixed transient bitmask for **2.5-second** HOME cards.
+Cards use the existing framebuffer scheduler and single display update, without
+extra rendering flushes, delays, inactivity extensions or wake changes. Sleeping
+pets do not display achievement cards. Notifications are transient: sleep/reboot
+can end a pending presentation; earned achievements remain permanent and can be
+reviewed in Journal. Older reconstructed awards are not announced again.
+
+Journal adds **ACHIEVEMENTS** after Field Notes. B opens entries. A cycles all 18,
+with locked names shown as `???`. B toggles a short, word-wrapped description. C
+backs out of details, then the entry browser, then Journal. Unlocked entries show
+their recorded date; the header shows the unlocked count out of 18. Existing
+Summary, Latest, Counts, Severe, Field Notes and Records screens remain available.
+
+Save version **9 → 10** adds **148 bytes** (one uint32 mask and 18 int64 timestamps).
+Payload/envelope sizes are **2488/2512 bytes**; alternating blobs total 5024 bytes,
+excluding NVS overhead. Existing version 9 fields, including exact Field Notes
+ring placement/outcomes, remain unchanged. Versions 1–9 use their existing
+migrations and reconstruct only achievements proven by their surviving totals,
+weather discoveries, temperature extrema, site counter and severe discoveries.
+For reconstructed awards the original threshold date is unknown: the timestamp
+uses the latest saved accepted-observation time, **not a claim of the original
+unlock date**. Older formats lacking a fact do not receive awards for it. No setup
+repeats, extra achievement-only write, unknown-version reset or save downgrade is
+introduced; future/unreadable saves retain the existing protection.
+
+JSON adds an `achievements` array with exactly 18 objects containing stable `id`,
+boolean `unlocked`, and integer `unlockedAt` (zero while locked). Imports validate
+unique IDs, count, types, timestamp bounds, locked-zero consistency, eligibility
+for claimed unlocks, and the whole-save checksum before allowing replacement.
+Older supported backups reconstruct quietly. The existing Python companion already
+supports the schema without protocol/dependency changes or a new limit. The
+full-metrics/sites/events/notes fixture now exports at approximately **16.8 KB**,
+below the existing 24 KiB bound; explicit desktop/device import confirmation stays.
+
+The passive piezo stays on the existing configured pin (D3 by default); no wiring
+or library change is required. `sound.h` now exposes these named events:
+
+- ACHIEVEMENT, GEAR_ITEM, GEAR_VARIANT, WEATHER_DISCOVERY, LIFETIME_RECORD,
+  SEVERE_DISCOVERY;
+- TIMER_COMPLETE, PET_INTERACTION, optional STARTUP;
+- AMBIENT_RAIN, AMBIENT_STORM, AMBIENT_SNOW, AMBIENT_WIND, AMBIENT_NIGHT.
+
+Tone patterns contain one or two short audible notes with brief silent gaps.
+Existing pet (55 ms) and timer (90 ms / 60 ms gap / 120 ms) patterns are retained.
+The fixed event-bit queue coalesces repeated pending event types instead of
+building an unlimited audio backlog. Each achievement card queues its own cue
+once when it starts. A live batch queues weather/record/item/color/severe cues
+only for actual new outcomes. Foreground priority is timer completion, achievement,
+severe discovery, gear/item colors, weather/record, then pet/startup, with ambience
+last. Timer/pet retain their immediate wrappers; foreground queued events are
+selected by priority between patterns, with a 650 ms gap. Important events cancel
+an ambient tone; busy ambient deadlines are skipped rather than queued.
+
+Ambient scheduling reads cached current weather and the latest accepted wind
+metric, independently of visual animation timing; it never fetches data.
+
+| Cue | Random interval | Audible pattern |
+| --- | --- | --- |
+| Rain drip | 15–40 seconds | One 14 ms tick |
+| Storm | 45–90 seconds | Two low tones, 25 + 30 ms |
+| Snow | 60–120 seconds | Two chimes, 22 + 20 ms |
+| Wind at least 30 km/h | 45–90 seconds | Two ascending tones, 20 + 20 ms |
+| Clear/mainly clear night | 75–150 seconds | Two chimes, 20 + 25 ms |
+
+Storm/rain/snow take precedence over wind; wind takes precedence over clear-night
+ambience. Initial entry and weather changes wait a full fresh interval. Menus,
+setup, active focus/timer and sleeping pets suppress ambience. Returning HOME
+rearms without a catch-up sound. SOUND OFF clears queued sounds and silences the
+output immediately; only timer completion retains the existing asleep-pet exception
+when sound is enabled. Ambience never extends the normal inactivity timeout, so
+longer-interval cues will only be heard when ordinary interaction keeps HOME awake.
+All scheduling uses `millis()` subtraction and works across rollover.
+
+Host tests (no attached device required):
+
+```sh
+for suite in achievements achievement_ui; do
+  c++ -std=c++17 \
+    -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+    -Ialtoids-pet/tests/journal_ui/stubs -Ialtoids-pet/tests/journal/stubs \
+    -Ialtoids-pet/firmware/altoids_pet \
+    -I"$HOME/Documents/Arduino/libraries/ArduinoJson/src" \
+    altoids-pet/tests/achievements/test_${suite}.cpp -o /tmp/fwf-${suite}
+  /tmp/fwf-${suite}
+done
+c++ -std=c++17 \
+  -isystem "$(xcrun --show-sdk-path)/usr/include/c++/v1" \
+  -Ialtoids-pet/tests/settings/stubs -Ialtoids-pet/tests/display/stubs \
+  -Ialtoids-pet/tests/journal_ui/stubs -Ialtoids-pet/firmware/altoids_pet \
+  altoids-pet/tests/settings/test_sound.cpp -o /tmp/fwf-sound
+/tmp/fwf-sound
+python3 -m unittest discover -s tools/tests -q
+```
+
+Tests cover all thresholds/IDs, multiple/no duplicate awards, canonical unit
+boundaries, travel and deleted sites, severe batches, quiet v9 NVS/JSON migration,
+round-trip and invalid import preservation; all labels/descriptions, navigation,
+cards and sleep gating; every named cue with SOUND OFF, priority over ambience,
+intervals, weather/wind/night gating, sleep/focus/menu suppression, no catch-up,
+queue coalescing, millis rollover and existing pet/timer behavior. Existing host
+suites still cover weather/NWS cache behavior, Field Notes, gear, buttons,
+Settings, persistence and TFT partial updates. Layout previews include achievement
+cards and every description in `/tmp/fwf-tft-achievement-*.ppm`.
+
+Physical checklist after your manual upload with flash erase disabled:
+
+1. Export a v9 backup first. After upgrade confirm journal, records, notes, severe
+   events, locations, gear/color selections, fur, settings and creation date are
+   intact. Provable achievements should already be recorded without replay cards;
+   reconstructed dates should match the latest old observation.
+2. Open Journal → Achievements. Check counts, `???` locks, unlocked names/dates,
+   A cycling, B descriptions and C backing out one level. Check all text fits.
+3. At an ordinary new milestone, verify one brief card and sound per achievement,
+   with multiple cards sequentially and no blank TFT flash. Repeat/cached wakes
+   must not award or replay it; sleep must retain the unlock after reconnecting.
+4. Keep HOME awake through ordinary interactions during naturally occurring rain.
+   Listen for a single short drip spaced 15–40 seconds apart, not every frame.
+   Storm/wind/snow/night cues should be much rarer. Judge audibility and comfort
+   on your actual passive piezo; host tests verify timing, not acoustic quality.
+5. Enter menus, focus/setup or the pet's scheduled sleep: ambience must stop and
+   never burst on return. SOUND OFF must silence every cue and clear pending audio.
+   Verify normal pet interaction and timer completion sounds, including the timer
+   finishing during scheduled pet sleep with SOUND ON.
+6. Verify no normal inactivity/sleep/B-wake, Wi-Fi cache, observation guard or
+   weather animation changes. Ambient sounds must not keep the device awake.
+7. During natural eligible field visits or supported severe events, confirm the
+   corresponding achievements alongside existing records/unlocks/notes. Host
+   fixtures cover extreme temperatures and severe events without needing unsafe
+   field testing or modified production thresholds.
+8. Export/import v10 with existing explicit confirmations; compare achievement
+   IDs/dates and all old progress after re-export. Invalid or canceled imports
+   must preserve the buddy. Restoring a supported older backup reconstructs only
+   its provable achievements and retains that backup's historical progress.

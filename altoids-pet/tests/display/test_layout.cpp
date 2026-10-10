@@ -14,6 +14,11 @@ WeatherState weatherState=WEATHER_CLEAR;
 bool isDaylight(){return currentHour>=7 && currentHour<19;}
 const char *weatherName(){const char *names[]={"UNKNOWN","CLEAR","MAINLY CLEAR","PARTLY CLOUDY","CLOUDY","RAIN","STORM","SNOW","FOG"};return names[weatherState];}
 const char *moonPhaseName(){return "FULL MOON";}
+#include "../../firmware/altoids_pet/achievements.cpp"
+#include "../../firmware/altoids_pet/sound.h"
+void queueSoundEvent(SoundEvent){}
+AchievementId queuedAchievement=AchievementId::COUNT;
+AchievementId takeNewAchievement(){auto id=queuedAchievement;queuedAchievement=AchievementId::COUNT;return id;}
 void soundPetInteraction(){}
 void stopSound(){}
 double configuredLatitude(){return 32;}
@@ -120,6 +125,15 @@ int main(){
  snapshot("field-notes-index");handleJournalButtons(false,true,false);
  for(int i=0;i<3;i++){char name[32];snprintf(name,sizeof(name),"field-note-%d",i);snapshot(name);
    assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));handleJournalButtons(false,true,false);}
+ openJournalScreen(JOURNAL_SCREEN);for(int i=0;i<11;i++)handleJournalButtons(true,false,false);
+ snapshot("achievements-index");handleJournalButtons(false,true,false);snapshot("achievement-locked");
+ buddy.unlockedAchievements=ACHIEVEMENT_MASK;for(auto &at:buddy.achievementUnlockedAt)at=1800000000;
+ for(int i=0;i<18;i++){
+   handleJournalButtons(false,true,false);char name[40];snprintf(name,sizeof(name),"achievement-details-%d",i);snapshot(name);
+   handleJournalButtons(false,false,true);handleJournalButtons(true,false,false);
+ }
+ currentScreen=HOME;currentHour=12;queuedAchievement=AchievementId::FLASH_FLOOD_WARNING_SEEN;
+ drawHome();snapshot("achievement-card");fakeMillis+=2500;drawHome();
  buddy.setupComplete=true;assert(!beginBuddySetup());
  buddy.setupComplete=false;assert(beginBuddySetup() && buddySetupActive());snapshot("welcome");
  unsigned commits=setupCommits;handleBuddySetupButtons(true,false,false);assert(page==SetupPage::WELCOME);

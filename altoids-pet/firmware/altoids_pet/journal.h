@@ -59,3 +59,6 @@ void listFieldLocations(Print &output);
 
 bool equipJournalGearVariant(GearSlot slot, GearId gear, uint8_t variant);
 bool takeNewGearVariant(GearId &gear, uint8_t &variant);
+
+// Transient achievement cards; migration/import never enqueue historical awards.
+AchievementId takeNewAchievement();

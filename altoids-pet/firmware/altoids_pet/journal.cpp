@@ -1,4 +1,6 @@
 #include "journal.h"
+#include "achievements.h"
+#include "sound.h"
 #include "field_notes.h"
 #include "gear.h"
 #include "gear_variants.h"
@@ -22,8 +24,10 @@ char serialLine[BUDDY_IMPORT_BYTES + 14];
 size_t serialLength = 0;
 bool serialOverflow = false;
 uint32_t newFieldEvents = 0;
+uint32_t newAchievements = 0;
 uint32_t newGearVariants[GEAR_ITEM_COUNT] = {};
 void queueVariantUnlocks(const BuddySaveData &next) {
+  if (addedGearVariant(buddy, next)) queueSoundEvent(SoundEvent::GEAR_VARIANT);
   for (uint8_t i = 0; i < GEAR_ITEM_COUNT; ++i) {
     uint32_t added = next.unlockedVariants[i] & ~buddy.unlockedVariants[i];
     newGearVariants[i] |= added;
@@ -107,7 +111,7 @@ void initializeJournal() {
   }
   retryPending = false; importPending = false;
   buttonImportRequired = false; transferStatus = BuddyTransferStatus::NONE;
-  serialLength = 0; serialOverflow = false; newFieldEvents = 0; memset(newGearVariants, 0, sizeof(newGearVariants));
+  serialLength = 0; serialOverflow = false; newFieldEvents = 0; newAchievements = 0; memset(newGearVariants, 0, sizeof(newGearVariants));
   const char *source = result == SaveLoadResult::LOADED ? "NVS" :
                        result == SaveLoadResult::MIGRATED_SAVE ? "older NVS (settings migration queued)" :
                        result == SaveLoadResult::MIGRATED_PET ? "legacy pet birthday (migration queued)" :
@@ -212,6 +216,7 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   if (observation.temperatureMilliC < 0 && next.freezingObservations < UINT64_MAX) ++next.freezingObservations;
   evaluateGearUnlocks(next);
   evaluateGearVariants(next);
+  uint32_t achieved = evaluateAchievements(next, observation.timestamp);
   FieldNote note;
   note.timestamp = next.latestObservationAt; note.temperatureMilliC = next.latestTemperatureMilliC;
   note.weatherCode = next.latestWeatherCode; note.category = next.latestCategory;
@@ -221,6 +226,11 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   if (!validateBuddySave(next)) { Serial.println("Observation rejected by save validation."); return false; }
   uint32_t unlocked = next.unlockedGear & ~buddy.unlockedGear;
   queueVariantUnlocks(next);
+  newAchievements |= achieved;
+  if (note.outcomes & NEW_WEATHER_DISCOVERY) queueSoundEvent(SoundEvent::WEATHER_DISCOVERY);
+  if (note.outcomes & (NEW_HIGH_TEMP|NEW_LOW_TEMP|NEW_WIND_RECORD|NEW_GUST_RECORD|NEW_PRESSURE_RECORD|NEW_PRECIP_RECORD|NEW_HUMIDITY_RECORD))
+    queueSoundEvent(SoundEvent::LIFETIME_RECORD);
+  if (unlocked) queueSoundEvent(SoundEvent::GEAR_ITEM);
   buddy = next; dirty = true;
   for (uint8_t id = 1; id <= 7; ++id) {
     GearId gear = static_cast<GearId>(id);
@@ -275,7 +285,7 @@ bool confirmBuddyImport(uint32_t checksum) {
        buddy.locations[buddy.activeLocation].longitudeMicrodegrees != pendingImport.locations[pendingImport.activeLocation].longitudeMicrodegrees);
   bool locationChanged = activeCoordinatesChanged || buddy.activeLocation != pendingImport.activeLocation || buddy.locationConfigured != pendingImport.locationConfigured ||
       buddy.latitudeMicrodegrees != pendingImport.latitudeMicrodegrees || buddy.longitudeMicrodegrees != pendingImport.longitudeMicrodegrees;
-  buddy = pendingImport; newFieldEvents = 0; memset(newGearVariants, 0, sizeof(newGearVariants)); dirty = false; retryPending = false;
+  buddy = pendingImport; newFieldEvents = 0; newAchievements = 0; memset(newGearVariants, 0, sizeof(newGearVariants)); dirty = false; retryPending = false;
   if (locationChanged) invalidateWeatherLocation();
   transferStatus = BuddyTransferStatus::IMPORT_COMPLETE;
   cancelBuddyImport();
@@ -414,6 +424,7 @@ bool latestJournalTemperature(int32_t &milliC) {
 bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries) {
   if (!available) return false;
   BuddySaveData progress = next; evaluateGearVariants(progress);
+  uint32_t achieved = evaluateAchievements(progress, progress.latestObservationAt);
   // Alert collection follows the accepted live observation in the same session.
   if (progress.fieldNoteCount && fieldNoteAt(progress, 0)->timestamp == progress.latestObservationAt) {
     auto &note = progress.fieldNotes[(progress.fieldNoteNext + FIELD_NOTE_COUNT - 1) % FIELD_NOTE_COUNT];
@@ -423,6 +434,8 @@ bool commitFieldEvents(const BuddySaveData &next, uint32_t discoveries) {
   }
   if (!validateBuddySave(progress)) return false;
   queueVariantUnlocks(progress);
+  newAchievements |= achieved;
+  if (discoveries) queueSoundEvent(SoundEvent::SEVERE_DISCOVERY);
   buddy = progress; dirty = true; newFieldEvents |= discoveries;
   checkpointJournal(); // Existing retry/before-sleep policy protects failed writes.
   return true;
@@ -441,4 +454,11 @@ bool takeNewGearVariant(GearId &gear, uint8_t &variant) {
  for (uint8_t i = 0; i < GEAR_ITEM_COUNT; ++i) for (uint8_t v = 0; v < gearVariantCount(GearId(i + 1)); ++v)
    if (newGearVariants[i] & (1UL << v)) { newGearVariants[i] &= ~(1UL << v); gear = GearId(i + 1); variant = v; return true; }
  return false;
+}
+
+AchievementId takeNewAchievement() {
+  for (uint8_t i = 0; i < ACHIEVEMENT_COUNT; ++i) if (newAchievements & (1UL << i)) {
+    newAchievements &= ~(1UL << i); return AchievementId(i);
+  }
+  return AchievementId::COUNT;
 }

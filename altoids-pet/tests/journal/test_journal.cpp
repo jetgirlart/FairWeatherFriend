@@ -34,6 +34,10 @@ WeatherState mapWeatherCode(int code) {
  }
 }
 #endif
+#include "../../firmware/altoids_pet/achievements.cpp"
+#include "../../firmware/altoids_pet/sound.h"
+std::vector<SoundEvent> queuedSoundEvents;
+void queueSoundEvent(SoundEvent event){queuedSoundEvents.push_back(event);}
 #include "../../firmware/altoids_pet/save.cpp"
 #include "../../firmware/altoids_pet/journal.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
@@ -76,11 +80,15 @@ void clearVariantHistory(BuddySaveData &s) {
  for(uint8_t id=1;id<=7;id++)s.unlockedVariants[id-1]=(s.unlockedGear & gearFlag(GearId(id)))?1:0;
  for(auto &v:s.equippedVariants)v=0;
 }
+void reconstructTestAchievements(BuddySaveData &s) {
+ s.unlockedAchievements=0;for(auto &at:s.achievementUnlockedAt)at=0;reconstructAchievements(s);
+}
 void clearLocationHistory(BuddySaveData &s) {
  clearVariantHistory(s);
  s.fieldSitesVisited=0;s.latestLocation=s.highestTemperatureLocation=s.lowestTemperatureLocation=UNKNOWN_LOCATION;
  for(auto &site:s.locations)site.visited=false;
  for(auto &record:s.records)record.location=UNKNOWN_LOCATION;
+ reconstructTestAchievements(s);
 }
 #ifndef FWF_RICH_WEATHER_TEST
 int main() {

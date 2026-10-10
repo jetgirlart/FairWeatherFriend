@@ -16,7 +16,7 @@ int main(){
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};
  assert(fetchWeather() && weatherValid && getBuddySave().totalObservations==1 && getBuddySave().fieldEvents[1].count==1);
  assert(httpUrls.size()==3 && httpUrls[2]=="https://api.weather.gov/alerts/active?point=32.000000,-95.000000");
- assert(httpHeaders[2]["User-Agent"]=="FairWeatherFriend/0.9.0 (https://github.com/jetgirlart/FairWeatherFriend)");
+ assert(httpHeaders[2]["User-Agent"]=="FairWeatherFriend/0.10.0 (https://github.com/jetgirlart/FairWeatherFriend)");
  assert(httpHeaders[2]["Accept"]=="application/geo+json");
  auto hash=buddySaveChecksum(getBuddySave());saveCachedData();WiFi.mode(WIFI_OFF);
  for(int i=0;i<100;++i)initializeWeather(true);

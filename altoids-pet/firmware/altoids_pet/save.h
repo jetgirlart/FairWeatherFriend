@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 9;
+constexpr uint32_t SAVE_VERSION = 10;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -83,6 +83,16 @@ struct FieldNote {
   uint32_t outcomes = 0, severeEvents = 0; // Newly discovered stable FieldEventId bits.
 };
 
+// Stable permanent milestone IDs; append, never reorder.
+enum class AchievementId : uint8_t {
+  FIRST_NOTES, FIELD_10, FIELD_50, FIELD_100, WEATHER_4, WEATHER_6,
+  WEATHER_ALL_CORE, CENTURY, FREEZING, DEEP_FREEZE, FIELD_SITE_3,
+  FIELD_SITE_5, FIELD_SITE_8, FIRST_SEVERE, TORNADO_WARNING_SEEN,
+  HURRICANE_WARNING_SEEN, BLIZZARD_WARNING_SEEN, FLASH_FLOOD_WARNING_SEEN, COUNT
+};
+constexpr uint8_t ACHIEVEMENT_COUNT = uint8_t(AchievementId::COUNT);
+constexpr uint32_t ACHIEVEMENT_MASK = (1UL << ACHIEVEMENT_COUNT) - 1;
+
 struct BuddySaveData {
   uint32_t saveVersion = SAVE_VERSION;
   int64_t createdAt = 0; // FIELD RESEARCH BEGAN; 0 until the existing clock is valid.
@@ -120,6 +130,8 @@ struct BuddySaveData {
   uint64_t freezingObservations = 0;
   FieldNote fieldNotes[FIELD_NOTE_COUNT] = {};
   uint8_t fieldNoteCount = 0, fieldNoteNext = 0; // Next slot to overwrite.
+  uint32_t unlockedAchievements = 0;
+  int64_t achievementUnlockedAt[ACHIEVEMENT_COUNT] = {};
   bool setupComplete = false; // Only genuinely new buddies need first-run setup.
 };
 

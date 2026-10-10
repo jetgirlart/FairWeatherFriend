@@ -12,6 +12,8 @@ SerialType Serial;
 PetPalette petPalette;
 unsigned long fakeMillis=0;
 bool timeValid=true;
+bool fakePetSleeping=false;
+bool isPetSleeping(){return fakePetSleeping;}
 time_t fakeEpoch=1800000000;
 extern "C" time_t time(time_t *p) { if(p)*p=fakeEpoch; return fakeEpoch; }
 std::map<std::string,Entries> storage;
@@ -27,6 +29,10 @@ WeatherState mapWeatherCode(int code) {
   default:return WEATHER_UNKNOWN;
  }
 }
+#include "../../firmware/altoids_pet/achievements.cpp"
+#include "../../firmware/altoids_pet/sound.h"
+std::vector<SoundEvent> queuedSoundEvents;
+void queueSoundEvent(SoundEvent event){queuedSoundEvents.push_back(event);}
 #include "../../firmware/altoids_pet/save.cpp"
 #include "../../firmware/altoids_pet/journal.cpp"
 #include "../../firmware/altoids_pet/gear.cpp"
@@ -52,7 +58,7 @@ int main() {
  nextPage();assert(shown("CLEAR") && shown("CLOUDY") && discoveryDots==0);
  nextPage();assert(shown("RAIN") && shown("FOG"));nextPage();assert(shown("SEVERE WEATHER") && shown("--"));
  for(int i=0;i<5;++i)nextPage();assert(shown("FIELD NOTES") && shown("No field notes yet"));
- nextPage();assert(shown("SUMMARY 1/11"));
+ nextPage();assert(shown("ACHIEVEMENTS"));nextPage();assert(shown("SUMMARY 1/12"));
  assert(nvsWrites==writes);unsigned pushes=framePushes;
  for(int i=0;i<50;i++){fakeMillis+=250;updateJournalScreens();}assert(framePushes==pushes);
  assert(handleJournalButtons(false,false,true));assert(currentScreen==MENU && menuIndex==2);

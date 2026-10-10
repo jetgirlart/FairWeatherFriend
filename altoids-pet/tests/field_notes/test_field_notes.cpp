@@ -51,7 +51,7 @@ int main(){
  assert(buddySaveChecksum(restored)==buddySaveChecksum(largest));
  // Restore the actual session so the subsequent import-rejection and migration fixtures agree.
  assert(importBuddy(json.c_str(),json.size()) && confirmBuddyImport(buddySaveChecksum(s)));fakeEpoch=s.latestObservationAt;
- assert(FIELD_NOTE_BYTES==56 && PAYLOAD_BYTES==2340 && RECORD_BYTES==2364);
+ assert(FIELD_NOTE_BYTES==56 && V9_PAYLOAD_BYTES==2340 && PAYLOAD_BYTES==2488 && RECORD_BYTES==2512);
  assert(json.size()<BUDDY_IMPORT_BYTES);initializeJournal();assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(s));
  for(int scenario=0;scenario<9;scenario++){
   auto bad=s;auto &n=bad.fieldNotes[(bad.fieldNoteNext+15)%16];

@@ -1,4 +1,5 @@
 #include "save.h"
+#include "achievements.h"
 #include "field_notes.h"
 #ifdef ARDUINO
 #include "config.h"
@@ -33,7 +34,8 @@ constexpr size_t V6_PAYLOAD_BYTES = V5_PAYLOAD_BYTES + 20 * FIELD_EVENT_COUNT + 
 constexpr size_t V7_PAYLOAD_BYTES = V6_PAYLOAD_BYTES + 28 * FIELD_LOCATION_COUNT + 48;
 constexpr size_t V8_PAYLOAD_BYTES = V7_PAYLOAD_BYTES + 8 + 4 * 7 + 4 * GEAR_SLOT_COUNT;
 constexpr size_t FIELD_NOTE_BYTES = 56;
-constexpr size_t PAYLOAD_BYTES = V8_PAYLOAD_BYTES + 8 + FIELD_NOTE_BYTES * FIELD_NOTE_COUNT;
+constexpr size_t V9_PAYLOAD_BYTES = V8_PAYLOAD_BYTES + 8 + FIELD_NOTE_BYTES * FIELD_NOTE_COUNT;
+constexpr size_t PAYLOAD_BYTES = V9_PAYLOAD_BYTES + 4 + 8 * ACHIEVEMENT_COUNT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t RECORD_BYTES = HEADER_BYTES + PAYLOAD_BYTES;
 // Save operations run synchronously on the firmware loop. Fixed scratch buffers
@@ -113,6 +115,10 @@ void encodeNotes(const BuddySaveData &s, uint8_t *p) {
     put32(p, n.outcomes); put32(p, n.severeEvents);
   }
 }
+void encodeAchievements(const BuddySaveData &s, uint8_t *p) {
+  put32(p, s.unlockedAchievements);
+  for (auto timestamp : s.achievementUnlockedAt) put64(p, timestamp);
+}
 void migrateVariants(BuddySaveData &s) {
   initializeGearVariants(s);
   // Historical observations do not contain a freezing count. Only one is known.
@@ -131,7 +137,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case 7: return V7_PAYLOAD_BYTES; case 8: return V8_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case 7: return V7_PAYLOAD_BYTES; case 8: return V8_PAYLOAD_BYTES; case 9: return V9_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -168,6 +174,13 @@ uint32_t v8Checksum(const BuddySaveData &s) {
   encodeCurrent(s, bytes); encodeEvents(s, bytes + V5_PAYLOAD_BYTES);
   encodeLocations(s, bytes + V6_PAYLOAD_BYTES); encodeVariants(s, bytes + V7_PAYLOAD_BYTES);
   uint8_t *version = bytes; put32(version, 8);
+  return hashBytes(bytes, sizeof(bytes));
+}
+uint32_t v9Checksum(const BuddySaveData &s) {
+  uint8_t bytes[V9_PAYLOAD_BYTES];
+  encodeCurrent(s, bytes); encodeEvents(s, bytes + V5_PAYLOAD_BYTES);
+  encodeLocations(s, bytes + V6_PAYLOAD_BYTES); encodeVariants(s, bytes + V7_PAYLOAD_BYTES);
+  encodeNotes(s, bytes + V8_PAYLOAD_BYTES); uint8_t *version = bytes; put32(version, 9);
   return hashBytes(bytes, sizeof(bytes));
 }
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
@@ -253,6 +266,10 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
       n.outcomes = get32(p); n.severeEvents = get32(p);
     }
   }
+  if (version >= 10) {
+    s.unlockedAchievements = get32(p);
+    for (auto &timestamp : s.achievementUnlockedAt) timestamp = get64(p);
+  } else reconstructAchievements(s);
   if (!validateBuddySave(s)) return false;
   if (version < 7) migrateHome(s);
   return validateBuddySave(s);
@@ -261,7 +278,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -278,7 +295,7 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
   uint8_t header[HEADER_BYTES];
   // Preferences getBytes requires enough space for the entire blob. Inspect
   // bounded blobs only; a differently sized future save must not be overwritten.
-  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES && length != HEADER_BYTES + V6_PAYLOAD_BYTES && length != HEADER_BYTES + V7_PAYLOAD_BYTES && length != HEADER_BYTES + V8_PAYLOAD_BYTES) {
+  if (length != RECORD_BYTES && length != HEADER_BYTES + V1_PAYLOAD_BYTES && length != HEADER_BYTES + V2_PAYLOAD_BYTES && length != HEADER_BYTES + V3_PAYLOAD_BYTES && length != HEADER_BYTES + V4_PAYLOAD_BYTES && length != HEADER_BYTES + V5_PAYLOAD_BYTES && length != HEADER_BYTES + V6_PAYLOAD_BYTES && length != HEADER_BYTES + V7_PAYLOAD_BYTES && length != HEADER_BYTES + V8_PAYLOAD_BYTES && length != HEADER_BYTES + V9_PAYLOAD_BYTES) {
     unsupported = true;
     // Read only bounded future blobs to report their header version. Never
     // allocate arbitrary NVS lengths or infer that an unread record is absent.
@@ -391,6 +408,13 @@ const char *weatherCategoryName(WeatherCategory category) {
 }
 
 bool validateBuddySave(const BuddySaveData &s) {
+  if ((s.unlockedAchievements & ~ACHIEVEMENT_MASK) || (s.unlockedAchievements & ~eligibleAchievements(s))) return false;
+  for (uint8_t i = 0; i < ACHIEVEMENT_COUNT; ++i) {
+    int64_t at = s.achievementUnlockedAt[i];
+    if (s.unlockedAchievements & (1UL << i)) {
+      if (at <= 0 || at < s.createdAt || at > s.latestObservationAt || !dateAt(at)) return false;
+    } else if (at != 0) return false;
+  }
   if (s.freezingObservations > s.totalObservations ||
       (s.freezingObservations && s.lowestTemperatureMilliC >= 0)) return false;
   for (uint8_t id = 1; id <= 7; ++id) {
@@ -526,7 +550,7 @@ bool validateBuddySave(const BuddySaveData &s) {
 }
 
 uint32_t buddySaveChecksum(const BuddySaveData &data) {
-  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + V8_PAYLOAD_BYTES);
+  uint8_t bytes[PAYLOAD_BYTES]; encodeCurrent(data, bytes); encodeEvents(data, bytes + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + V8_PAYLOAD_BYTES); encodeAchievements(data, bytes + V9_PAYLOAD_BYTES);
   return hashBytes(bytes, sizeof(bytes));
 }
 
@@ -571,7 +595,7 @@ bool persistBuddySave(const BuddySaveData &data) {
   uint8_t *p = bytes;
   uint64_t next = generation + 1;
   put32(p, SAVE_MAGIC); put32(p, data.saveVersion); put32(p, PAYLOAD_BYTES); put64(p, next);
-  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + HEADER_BYTES + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + HEADER_BYTES + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + HEADER_BYTES + V8_PAYLOAD_BYTES);
+  p += 4; encodeCurrent(data, bytes + HEADER_BYTES); encodeEvents(data, bytes + HEADER_BYTES + V5_PAYLOAD_BYTES); encodeLocations(data, bytes + HEADER_BYTES + V6_PAYLOAD_BYTES); encodeVariants(data, bytes + HEADER_BYTES + V7_PAYLOAD_BYTES); encodeNotes(data, bytes + HEADER_BYTES + V8_PAYLOAD_BYTES); encodeAchievements(data, bytes + HEADER_BYTES + V9_PAYLOAD_BYTES);
   uint32_t checksum = hashBytes(bytes + HEADER_BYTES, PAYLOAD_BYTES, hashBytes(bytes, 20));
   p = bytes + 20; put32(p, checksum);
   Preferences prefs;
@@ -669,6 +693,11 @@ bool serializeBuddySave(const BuddySaveData &s, Print &output) {
       else metrics[metricName(MetricId(i))] = nullptr;
     }
     note["outcomes"] = n.outcomes; note["severeEvents"] = n.severeEvents;
+  }
+  JsonArray achievements = doc["achievements"].to<JsonArray>();
+  for (uint8_t i = 0; i < ACHIEVEMENT_COUNT; ++i) {
+    JsonObject a = achievements.add<JsonObject>(); a["id"] = i;
+    a["unlocked"] = achievementUnlocked(s, AchievementId(i)); a["unlockedAt"] = s.achievementUnlockedAt[i];
   }
   char checksum[9]; snprintf(checksum, sizeof(checksum), "%08lx", static_cast<unsigned long>(buddySaveChecksum(s)));
   doc["checksum"] = checksum;
@@ -856,6 +885,18 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       }
     }
   }
+  if (importedVersion >= 10) {
+    JsonArrayConst achievements = doc["achievements"].as<JsonArrayConst>();
+    if (achievements.isNull() || achievements.size() != ACHIEVEMENT_COUNT) { error = "Missing achievements"; return false; }
+    uint32_t ids = 0;
+    for (JsonObjectConst a : achievements) {
+      if (a.size() != 3 || !a["id"].is<uint32_t>() || a["id"].as<uint32_t>() >= ACHIEVEMENT_COUNT ||
+          !a["unlocked"].is<bool>() || !a["unlockedAt"].is<int64_t>()) { error = "Invalid achievement"; return false; }
+      uint8_t id = a["id"].as<uint8_t>(); if (ids & (1UL << id)) return false; ids |= 1UL << id;
+      if (a["unlocked"].as<bool>()) s.unlockedAchievements |= 1UL << id;
+      s.achievementUnlockedAt[id] = a["unlockedAt"].as<int64_t>();
+    }
+  } else reconstructAchievements(s);
   if (!validateBuddySave(s)) { error = "Inconsistent journal, records or gear"; return false; }
   const char *text = doc["checksum"].as<const char *>();
   if (!text || strlen(text) != 8) { error = "Missing checksum"; return false; }
@@ -865,7 +906,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : importedVersion == 7 ? v7Checksum(s) : importedVersion == 8 ? v8Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : importedVersion == 7 ? v7Checksum(s) : importedVersion == 8 ? v8Checksum(s) : importedVersion == 9 ? v9Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   if (importedVersion < 7) migrateHome(s);
   data = s; error = nullptr; return true;
 }

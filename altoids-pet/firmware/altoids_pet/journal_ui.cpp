@@ -1,5 +1,8 @@
 #include "journal_ui.h"
 #include "journal.h"
+#include "achievements.h"
+#include "sound.h"
+#include "pet.h"
 #include "field_notes.h"
 #include "field_locations.h"
 #include "gear.h"
@@ -13,6 +16,8 @@ namespace {
 uint8_t journalPage = 0;
 bool browsingNotes = false;
 uint8_t noteAge = 0, notePage = 0;
+bool browsingAchievements = false, achievementDetails = false;
+uint8_t achievementIndex = 0;
 uint8_t recordsPage = 0;
 GearId selectedGear = GearId::NONE;
 GearSlot selectedSlot = GearSlot::HEAD;
@@ -138,14 +143,45 @@ void drawFieldNotes() {
   }
   centered(111, "A:OLD B:PAGE C:BACK"); finishScreen();
 }
+void drawAchievements() {
+  beginScreen("ACHIEVEMENTS");
+  if (unavailable()) { finishScreen(); return; }
+  const auto &s = getBuddySave(); unsigned count = 0;
+  for (uint8_t i = 0; i < ACHIEVEMENT_COUNT; ++i) if (achievementUnlocked(s, AchievementId(i))) ++count;
+  char text[40]; snprintf(text, sizeof(text), "%u / %u RECORDED", count, ACHIEVEMENT_COUNT); centered(26, text);
+  if (!browsingAchievements) {
+    centered(52, "Fieldwork milestones"); centered(76, "B:OPEN"); centered(111, "A:NEXT C:MENU");
+  } else {
+    auto id = AchievementId(achievementIndex); bool unlocked = achievementUnlocked(s, id);
+    snprintf(text, sizeof(text), "%u / %u", achievementIndex+1, ACHIEVEMENT_COUNT); centered(38, text);
+    centered(50, unlocked ? achievementName(id) : "???");
+    if (!achievementDetails) {
+      centered(72, unlocked ? "RECORDED" : "UNDISCOVERED");
+      if (unlocked) { formatDate(s.achievementUnlockedAt[achievementIndex], text, sizeof(text)); centered(89, text); }
+    } else {
+      // Word wrap the flash description, without dynamic strings or UI clipping.
+      const char *description = achievementDescription(id); int y = 66;
+      while (*description && y <= 96) {
+        size_t n = strlen(description); if (n > 19) {
+          n = 19; while (n && description[n] != ' ') --n; if (!n) n = 19;
+        }
+        char line[20]; memcpy(line, description, n); line[n] = 0; centered(y, line);
+        description += n; while (*description == ' ') ++description; y += 9;
+      }
+    }
+    centered(111, "A:NEXT B:INFO C:BACK");
+  }
+  finishScreen();
+}
 void drawJournal() {
+  if (journalPage == 11) { drawAchievements(); return; }
   if (journalPage == 10) { drawFieldNotes(); return; }
   beginScreen(journalPage >= 5 ? "SEVERE WEATHER" : "JOURNAL");
   if (!unavailable()) {
     const BuddySaveData &data = getBuddySave();
     char text[32];
     if (journalPage == 0) {
-      textAt(4, 27, "SUMMARY 1/11");
+      textAt(4, 27, "SUMMARY 1/12");
       centered(39, "OBSERVATIONS");
       snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(data.totalObservations));
       centered(50, text, 2);
@@ -160,7 +196,7 @@ void drawJournal() {
       formatDate(data.createdAt, text, sizeof(text));
       textAt(4, 102, text);
     } else if (journalPage == 1 || journalPage == 2) {
-      textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/11" : "AIR & WIND 3/11");
+      textAt(4, 27, journalPage == 1 ? "CONDITIONS 2/12" : "AIR & WIND 3/12");
       if (data.totalObservations == 0) noObservations();
       else {
         if (journalPage == 1) {
@@ -178,7 +214,7 @@ void drawJournal() {
         }
       }
     } else if (journalPage < 5) {
-      snprintf(text, sizeof(text), "WEATHER %u/11", unsigned(journalPage + 1));
+      snprintf(text, sizeof(text), "WEATHER %u/12", unsigned(journalPage + 1));
       textAt(4, 25, text);
       uint8_t first = (journalPage - 3) * 4;
       for (uint8_t row = 0; row < 4; ++row) {
@@ -193,7 +229,7 @@ void drawJournal() {
     }
     if (journalPage >= 5) {
       // Three events/page, labels split into two lines at a word boundary.
-      snprintf(text, sizeof(text), "FIELD EVENTS %u/11", journalPage + 1); centered(20, text);
+      snprintf(text, sizeof(text), "FIELD EVENTS %u/12", journalPage + 1); centered(20, text);
       for (uint8_t row = 0; row < 3; ++row) {
         uint8_t id = (journalPage - 5) * 3 + row;
         const char *name = fieldEventName(FieldEventId(id));
@@ -315,6 +351,7 @@ void openJournalScreen(ScreenMode screen) {
   if (screen != JOURNAL_SCREEN && screen != RECORDS_SCREEN && screen != GEAR_SCREEN) return;
   currentScreen = screen;
   journalPage = 0; recordsPage = 0; browsingNotes = false; noteAge = notePage = 0;
+  browsingAchievements = achievementDetails = false; achievementIndex = 0;
   selectedSlot = GearSlot::HEAD;
   choosingItem = false; choosingVariant = false; selectedVariant = 0;
   selectedGear = GearId::NONE;
@@ -327,8 +364,9 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
   if (aPressed) {
     if (currentScreen == RECORDS_SCREEN) { recordsPage = (recordsPage + 1) % 4; redraw = true; }
     if (currentScreen == JOURNAL_SCREEN) {
-      if (browsingNotes && getBuddySave().fieldNoteCount) noteAge = (noteAge + 1) % getBuddySave().fieldNoteCount;
-      else { browsingNotes = false; journalPage = (journalPage + 1) % 11; }
+      if (browsingAchievements) { achievementIndex = (achievementIndex + 1) % ACHIEVEMENT_COUNT; achievementDetails = false; }
+      else if (browsingNotes && getBuddySave().fieldNoteCount) noteAge = (noteAge + 1) % getBuddySave().fieldNoteCount;
+      else { browsingNotes = false; journalPage = (journalPage + 1) % 12; }
       redraw = true;
     }
     if (currentScreen == GEAR_SCREEN && journalAvailable()) {
@@ -342,6 +380,11 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
       }
       equipmentSaveFailed = false; redraw = true;
     }
+  }
+  if (bPressed && currentScreen == JOURNAL_SCREEN && journalPage == 11 && journalAvailable()) {
+    if (!browsingAchievements) { browsingAchievements = true; achievementIndex = 0; achievementDetails = false; }
+    else achievementDetails = !achievementDetails;
+    redraw = true;
   }
   if (bPressed && currentScreen == JOURNAL_SCREEN && journalPage == 10 && journalAvailable() && getBuddySave().fieldNoteCount) {
     if (!browsingNotes) { browsingNotes = true; noteAge = notePage = 0; }
@@ -361,7 +404,11 @@ bool handleJournalButtons(bool aPressed, bool bPressed, bool cPressed) {
     redraw = true;
   }
   if (cPressed) {
-    if (currentScreen == JOURNAL_SCREEN && browsingNotes) {
+    if (currentScreen == JOURNAL_SCREEN && browsingAchievements) {
+      if (achievementDetails) achievementDetails = false;
+      else browsingAchievements = false;
+      drawJournal();
+    } else if (currentScreen == JOURNAL_SCREEN && browsingNotes) {
       browsingNotes = false; drawJournal();
     } else if (currentScreen == GEAR_SCREEN && choosingVariant) {
       choosingVariant = false; equipmentSaveFailed = false; drawGear();
@@ -385,17 +432,29 @@ void updateJournalScreens() {
 // Called inside the existing HOME frame scheduler; no separate display update,
 // polling, sleep override, or input mode. Timer/setup/menu screens take priority.
 bool drawFieldEventNotification() {
+  static AchievementId showingAchievement = AchievementId::COUNT;
   static FieldEventId showing = FieldEventId::COUNT;
   static unsigned long started = 0;
   static GearId showingGear = GearId::NONE; static uint8_t showingVariant = 0;
-  if ((showing != FieldEventId::COUNT || showingGear != GearId::NONE) && millis() - started >= 2500) {
-    showing = FieldEventId::COUNT; showingGear = GearId::NONE;
+  if ((showingAchievement != AchievementId::COUNT || showing != FieldEventId::COUNT || showingGear != GearId::NONE) && millis() - started >= 2500) {
+    showingAchievement = AchievementId::COUNT; showing = FieldEventId::COUNT; showingGear = GearId::NONE;
   }
-  if (showing == FieldEventId::COUNT && showingGear == GearId::NONE) {
-    showing = takeNewFieldEvent(); started = millis();
-    if (showing == FieldEventId::COUNT && !takeNewGearVariant(showingGear, showingVariant)) return false;
+  if (showingAchievement != AchievementId::COUNT && isPetSleeping()) { showingAchievement = AchievementId::COUNT; }
+  if (showingAchievement == AchievementId::COUNT && showing == FieldEventId::COUNT && showingGear == GearId::NONE) {
+    if (!isPetSleeping()) showingAchievement = takeNewAchievement();
+    started = millis();
+    if (showingAchievement != AchievementId::COUNT) queueSoundEvent(SoundEvent::ACHIEVEMENT);
+    else {
+      showing = takeNewFieldEvent();
+      if (showing == FieldEventId::COUNT && !takeNewGearVariant(showingGear, showingVariant)) return false;
+    }
   }
   display.clearDisplay(); display.setTextColor(COLOR_TEXT);
+  if (showingAchievement != AchievementId::COUNT) {
+    centered(20, "FIELD ACHIEVEMENT!");
+    centered(52, achievementName(showingAchievement));
+    centered(85, "Recorded in notebook"); return true;
+  }
   if (showingGear != GearId::NONE) {
     centered(20, "NEW GEAR COLOR!");
     centered(48, gearLabels[uint8_t(showingGear)]); centered(66, gearVariantName(showingGear, showingVariant));
