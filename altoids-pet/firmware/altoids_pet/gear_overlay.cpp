@@ -28,15 +28,41 @@ void drawGearItem(GearId equipped, int x, int y, bool crouching, bool liftedFeet
 #endif
       break;
     case GearId::UMBRELLA:
+#ifdef FWF_PNG_HAS_GEAR_UMBRELLA
+      packed = PNG_GEAR_UMBRELLA_ROLES; // Authored on the pet's shared 48x48 canvas.
+#else
       art = GEAR_UMBRELLA; mask = GEAR_UMBRELLA_MASK;
       x += 48; y -= 12;
+#endif
       crouching = false; // Rigid accessory; only torso clothing compresses.
       break;
-    case GearId::RAINCOAT: art = GEAR_RAINCOAT; mask = GEAR_RAINCOAT_MASK; break;
-    case GearId::WINTER_SCARF: art = GEAR_WINTER_SCARF; mask = GEAR_WINTER_SCARF_MASK; break;
-    case GearId::WINTER_COAT: art = GEAR_WINTER_COAT; mask = GEAR_WINTER_COAT_MASK; break;
+    case GearId::RAINCOAT:
+#ifdef FWF_PNG_HAS_GEAR_RAINCOAT
+      packed = PNG_GEAR_RAINCOAT_ROLES;
+#else
+      art = GEAR_RAINCOAT; mask = GEAR_RAINCOAT_MASK;
+#endif
+      break;
+    case GearId::WINTER_SCARF:
+#ifdef FWF_PNG_HAS_GEAR_WINTER_SCARF
+      packed = PNG_GEAR_WINTER_SCARF_ROLES;
+#else
+      art = GEAR_WINTER_SCARF; mask = GEAR_WINTER_SCARF_MASK;
+#endif
+      break;
+    case GearId::WINTER_COAT:
+#ifdef FWF_PNG_HAS_GEAR_WINTER_COAT
+      packed = PNG_GEAR_WINTER_COAT_ROLES;
+#else
+      art = GEAR_WINTER_COAT; mask = GEAR_WINTER_COAT_MASK;
+#endif
+      break;
     case GearId::BOOTS:
+#ifdef FWF_PNG_HAS_GEAR_BOOTS
+      packed = PNG_GEAR_BOOTS_ROLES;
+#else
       art = GEAR_BOOTS; mask = GEAR_BOOTS_MASK;
+#endif
       // BOUNCE artwork lifts the paws one source pixel, in addition to the hop.
       if (liftedFeet) pixelOffsetY = -2;
       break;

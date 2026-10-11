@@ -4,6 +4,8 @@
 #include <driver/gpio.h>
 
 namespace {
+static_assert(TFT_SPI_MODE == SPI_MODE0 || TFT_SPI_MODE == SPI_MODE3,
+              "TFT SPI mode must be mode 0 or mode 3");
 Adafruit_ST7789 tft(&SPI, TFT_CS, TFT_DC, TFT_RST);
 bool panelReady = false;
 bool backlightOn = false;
@@ -59,14 +61,20 @@ void initializeDisplayBus() {
   gpio_hold_dis(static_cast<gpio_num_t>(TFT_BL));
   digitalWrite(TFT_BL, LOW);
   backlightOn = false;
+  // Explicit -1 MISO/CS prevents claiming the default D9/D7 SPI pins.
   SPI.begin(TFT_SCK, -1, TFT_MOSI, TFT_CS);
+  // Set the idle clock level before the driver's D4 reset. With CS always LOW,
+  // switching polarity after reset can otherwise clock an unwanted first bit.
+  SPI.beginTransaction(SPISettings(TFT_SPI_HZ, MSBFIRST, TFT_SPI_MODE));
+  SPI.endTransaction();
 }
 void initializeDisplay() {
   if (!display.ready()) {
     Serial.println("ERROR: TFT framebuffer allocation failed.");
     while (true) yield();
   }
-  tft.init(TFT_WIDTH, TFT_HEIGHT, SPI_MODE0);
+  // Driver performs the D4 hardware reset, then SWRESET and sleep-out.
+  tft.init(TFT_WIDTH, TFT_HEIGHT, TFT_SPI_MODE);
   tft.setRotation(TFT_ROTATION);
   tft.setSPISpeed(TFT_SPI_HZ);
   panelReady = true;

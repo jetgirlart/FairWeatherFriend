@@ -3,10 +3,13 @@
 #include "field_notes.h"
 #ifdef ARDUINO
 #include "config.h"
-#endif
+#else
+// Only host tests without config.h need fallback macros. Firmware settings
+// are C++ constants, so #ifndef cannot test whether they have been declared.
 #ifndef LATITUDE
 #define LATITUDE 0.0
 #define LONGITUDE 0.0
+#endif
 #endif
 #ifndef SOUND_ENABLED
 #define SOUND_ENABLED true

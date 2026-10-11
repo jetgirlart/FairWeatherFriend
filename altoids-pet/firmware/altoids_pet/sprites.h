@@ -21,6 +21,10 @@ extern const uint8_t KITSUNE_BOUNCE[KITSUNE_FRAME_BYTES] PROGMEM;
 extern const uint8_t KITSUNE_LOOK_UP[KITSUNE_FRAME_BYTES] PROGMEM;
 extern const uint8_t KITSUNE_FOCUS[KITSUNE_FRAME_BYTES] PROGMEM;
 
+// Missing animation PNGs reuse authored frames rather than switching character
+// designs. Presence flags live with the generated assets in kitsune_assets.cpp.
+const uint8_t *resolveKitsuneFrame(const uint8_t *frame);
+
 // UI supplies the physical origin; the existing pet animation coordinates
 // remain local. No display-driver or scheduler changes are required.
 void setSpriteOrigin(int x, int y);

@@ -51,6 +51,10 @@ class SpriteTests(unittest.TestCase):
         self.samples = [(3, 7, 99, 0)] + [rgb + (255,) for rgb in sprites.COLORS]
         self.pixels = [self.samples[i % 5] for i in range(2304)]
         self.idle.write_bytes(png(self.pixels))
+        (self.project / "assets/backgrounds").mkdir()
+        for name in sprites.BACKGROUNDS:
+            (self.project / f"assets/backgrounds/{name}.png").write_bytes(
+                png([(0, 0, 0, 0)] * 57600, width=240, height=240))
 
     def test_exact_roles_transparency_and_packing(self):
         decoded = sprites.decode_png(self.idle.read_bytes())
@@ -145,12 +149,84 @@ class SpriteTests(unittest.TestCase):
         self.assertIn(b"0x01, 0x23, 0x40", gear)
         self.assertNotIn(b"PNG_GEAR_BOOTS_ROLES", gear)
 
+    def test_gear_filename_aliases_and_ambiguity(self):
+        for alias, name in [("scarf", "winter_scarf"), ("bootsf", "boots")]:
+            path = self.project / f"assets/gear/{alias}.png"
+            path.write_bytes(png(self.pixels))
+            gear = sprites.generate(self.project)["gear_assets.h"]
+            self.assertIn(f"FWF_PNG_HAS_GEAR_{name.upper()}".encode(), gear)
+            self.assertIn(f"assets/gear/{alias}.png".encode(), gear)
+            canonical = self.project / f"assets/gear/{name}.png"
+            canonical.write_bytes(png(self.pixels))
+            with self.assertRaisesRegex(sprites.AssetError, "Ambiguous"):
+                sprites.generate(self.project)
+            canonical.unlink()
+
+    def test_declared_buddy_layers_preserve_body_and_clear_expression(self):
+        import json
+        base = [2] * 2304
+        base[0] = 0
+        base[20 * 48 + 16] = 4
+        overlay = [0] * 2304
+        overlay[21 * 48 + 16] = 1
+        composed = sprites.compose_layer(base, overlay, [[16, 20, 3, 4, 2]])
+        self.assertEqual(composed[0], 0)
+        self.assertEqual(composed[100], 2)
+        self.assertEqual(composed[20 * 48 + 16], 2)
+        self.assertEqual(composed[21 * 48 + 16], 1)
+        self.assertEqual(base[20 * 48 + 16], 4)
+        manifest = self.project / "assets/buddy/layers.json"
+        manifest.write_text(json.dumps({"blink": {"clearRegions": [[16, 20, 3, 4, 2]]}}))
+        (self.project / "assets/buddy/kitsune_blink.png").write_bytes(png([(0, 0, 0, 0)] * 2304))
+        first = sprites.generate(self.project)
+        self.assertIn(b"Composed over kitsune_idle.png", first["buddy_assets.inc"])
+        self.assertEqual(first, sprites.generate(self.project))
+        for bad in [{"idle": {}}, {"blink": {"clearRegions": [[47, 0, 2, 1, 2]]}}, {"blink": {"mode": "guess"}}]:
+            manifest.write_text(json.dumps(bad))
+            with self.assertRaises(sprites.AssetError):
+                sprites.generate(self.project)
+
     def test_current_source_and_checked_in_art_match(self):
-        sources = list((ROOT / "assets/buddy").glob("*.png")) + list((ROOT / "assets/gear").glob("*.png"))
+        sources = [p for folder in ("buddy", "gear", "backgrounds") for p in (ROOT / "assets" / folder).glob("*.png")]
         before = {p: p.read_bytes() for p in sources}
         sprites.convert(ROOT, check=True)
         self.assertEqual(before, {p: p.read_bytes() for p in sources})
         self.assertEqual(len(sprites.pack_roles(sprites.palette_roles(sprites.decode_png(before[ROOT / "assets/buddy/kitsune_idle.png"])))), 1152)
+
+    def test_background_dimensions_alpha_palette_and_missing_required(self):
+        path = self.project / "assets/backgrounds/foreground.png"
+        for width, height in [(239, 240), (240, 239), (48, 48)]:
+            path.write_bytes(png([(0, 0, 0, 0)] * width * height, width=width, height=height))
+            with self.assertRaisesRegex(sprites.AssetError, "foreground.png.*exactly 240x240"):
+                sprites.generate(self.project)
+        for invalid in [(255, 0, 254, 255), (0, 255, 0, 127)]:
+            path.write_bytes(png([invalid] + [(0, 0, 0, 0)] * 57599, width=240, height=240))
+            with self.assertRaisesRegex(sprites.AssetError, r"foreground.png.*\(0,0\)"):
+                sprites.generate(self.project)
+        path.unlink()
+        with self.assertRaisesRegex(sprites.AssetError, "foreground.png.*required background source is missing"):
+            sprites.convert(self.project)
+        self.assertFalse((self.project / "firmware").exists())
+
+    def test_background_exact_pixels_transparency_and_determinism(self):
+        pixels = [self.samples[i % 5] for i in range(57600)]
+        data = png(pixels, width=240, height=240, interlace=1, methods=(0,1,2,3,4))
+        path = self.project / "assets/backgrounds/environment.png"
+        path.write_bytes(data)
+        roles = sprites.palette_roles(sprites.decode_png(data, 240), 240)
+        self.assertEqual(roles, [i % 5 for i in range(57600)])
+        packed = sprites.pack_roles(roles, 240)
+        self.assertEqual(len(packed), 28800)
+        self.assertEqual(packed[:5], bytes([0x01,0x23,0x40,0x12,0x34]))
+        outputs = sprites.convert(self.project)
+        self.assertEqual(outputs, sprites.convert(self.project, check=True))
+        self.assertIn(b"BACKGROUND_ENVIRONMENT[28800]", outputs["background_assets.h"])
+        self.assertEqual(path.read_bytes(), data)
+        path.rename(path.with_name("background.png"))
+        self.assertIn(b"assets/backgrounds/background.png", sprites.generate(self.project)["background_assets.h"])
+        path.write_bytes(data)
+        with self.assertRaisesRegex(sprites.AssetError, "Ambiguous background"):
+            sprites.generate(self.project)
 
     def test_cli_failure_is_nonzero_and_named(self):
         self.idle.write_bytes(b"bad png")

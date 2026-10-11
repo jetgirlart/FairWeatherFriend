@@ -53,7 +53,7 @@ void drawPackedPaletteSprite(const uint8_t *frame, int x, int y, const SpritePal
   }
 }
 void drawColoredKitsune(const uint8_t *frame, int x, int y, FurPaletteId palette, uint8_t ear, bool crouch) {
-  drawPackedPaletteSprite(frame, x, y, furPalette(palette), ear, crouch);
+  drawPackedPaletteSprite(resolveKitsuneFrame(frame), x, y, furPalette(palette), ear, crouch);
 }
 
 void drawPaletteGearSprite(const uint8_t *bitmap, int x, int y, const SpritePalette &palette, bool patterned, bool crouch, int offsetY) {

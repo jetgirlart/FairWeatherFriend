@@ -1,4 +1,5 @@
 #include "display.h"
+#include "background.h"
 #include "journal_ui.h"
 #include "buddy_setup.h"
 #include "settings_ui.h"
@@ -6,6 +7,8 @@
 #include "pet.h"
 #include "sprites.h"
 #include "weather.h"
+#include "journal.h"
+#include "field_locations.h"
 #include "timer.h"
 // ==================================================
 // SCREEN STATE
@@ -74,7 +77,8 @@ void drawSun(int x, int y) {
 void drawMoonPhase(
   int x,
   int y,
-  MoonPhase phase
+  MoonPhase phase,
+  uint16_t background = COLOR_BACKGROUND
 ) {
 
   const int radius = 7;
@@ -94,7 +98,7 @@ void drawMoonPhase(
         x,
         y,
         radius - 1,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -105,7 +109,7 @@ void drawMoonPhase(
         x - 3,
         y,
         radius,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -117,7 +121,7 @@ void drawMoonPhase(
         y - radius,
         radius,
         radius * 2 + 1,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -128,7 +132,7 @@ void drawMoonPhase(
         x - 7,
         y,
         radius,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -143,7 +147,7 @@ void drawMoonPhase(
         x + 7,
         y,
         radius,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -155,7 +159,7 @@ void drawMoonPhase(
         y - radius,
         radius + 1,
         radius * 2 + 1,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -166,7 +170,7 @@ void drawMoonPhase(
         x + 3,
         y,
         radius,
-        COLOR_BACKGROUND
+        background
       );
 
       break;
@@ -434,28 +438,34 @@ void drawWeatherIcon(
 // WEATHER BACKGROUND EFFECTS
 // ==================================================
 
-void drawWeatherBackground() {
-  // The same frame counters/cadence now surround the pet across the TFT field.
-  if (weatherState == WEATHER_CLEAR && !isDaylight()) {
-    const int stars[][2] = {{24,62},{204,78},{38,142},{54,92},{191,142},{219,156}};
-    for (int i = 0; i < 6; ++i) {
-      bool visible = i < 3 || (i < 5 ? animationFrame % 4 < 2 : animationFrame % 8 < 4);
-      if (visible) display.fillRect(stars[i][0], stars[i][1], 2, 2, COLOR_WARM);
-    }
-  } else if (weatherState == WEATHER_RAIN || weatherState == WEATHER_STORM) {
+// Split existing particles between depth planes, retaining their counts,
+// coordinates and frame cadence. Stars/moon are behind the cloud artwork.
+void drawHomeNightSky(const HomeScene &scene) {
+  if (!scene.nightSky) return;
+  const int stars[][2] = {{24,62},{204,78},{38,142},{54,92},{191,142},{219,156}};
+  for (int i = 0; i < 6; ++i) {
+    bool visible = i < 3 || (i < 5 ? animationFrame % 4 < 2 : animationFrame % 8 < 4);
+    if (visible) display.fillRect(stars[i][0], stars[i][1], 2, 2, COLOR_WARM);
+  }
+  drawMoonPhase(201, 92, currentMoonPhase, homeSkyColor(scene));
+}
+void drawWeatherParticles(bool foreground) {
+  if (weatherState == WEATHER_RAIN || weatherState == WEATHER_STORM) {
     bool storm = weatherState == WEATHER_STORM;
     int count = storm ? 6 : 7, shift = animationFrame * (storm ? 5 : 4);
     for (int i = 0; i < count; ++i) {
+      if (bool(i % 2) != foreground) continue;
       int x = 18 + i * 33, y = 62 + (i * 13 + shift) % 96;
       display.drawLine(x, y, x - 3, y + 8, COLOR_COOL);
     }
-    if (storm && (animationFrame % 24 == 0 || animationFrame % 24 == 1)) {
+    if (!foreground && storm && animationFrame % 24 < 2) {
       display.drawLine(199, 69, 185, 95, COLOR_WARM);
       display.drawLine(185, 95, 198, 95, COLOR_WARM);
       display.drawLine(198, 95, 180, 123, COLOR_WARM);
     }
   } else if (weatherState == WEATHER_SNOW) {
     for (int i = 0; i < 8; ++i) {
+      if (bool(i % 2) != foreground) continue;
       int x = 14 + (i * 31 + animationFrame) % 212;
       int y = 62 + (i * 17 + animationFrame * 2) % 100;
       display.fillRect(x, y, 2, 2, COLOR_COOL);
@@ -463,16 +473,13 @@ void drawWeatherBackground() {
     }
   } else if (weatherState == WEATHER_FOG) {
     int shift = animationFrame % 12;
-    display.drawFastHLine(12 + shift, 76, 69, COLOR_MUTED);
-    display.drawFastHLine(142 - shift, 102, 80, COLOR_MUTED);
-    display.drawFastHLine(16 + shift, 139, 75, COLOR_MUTED);
-    display.drawFastHLine(148 - shift, 160, 76, COLOR_MUTED);
-  }
-  // Calm cloud banks are scenery; weather fetching/state is untouched.
-  if (weatherState == WEATHER_CLOUDY || weatherState == WEATHER_PARTLY_CLOUDY ||
-      weatherState == WEATHER_MAINLY_CLEAR || weatherState == WEATHER_RAIN || weatherState == WEATHER_STORM) {
-    display.beginPet(42, 66); drawCloud(0, 0); display.endPet();
-    display.beginPet(190, 72); drawCloud(0, 0); display.endPet();
+    if (!foreground) {
+      display.drawFastHLine(12 + shift, 76, 69, COLOR_MUTED);
+      display.drawFastHLine(142 - shift, 102, 80, COLOR_MUTED);
+    } else {
+      display.drawFastHLine(16 + shift, 139, 75, COLOR_MUTED);
+      display.drawFastHLine(148 - shift, 160, 76, COLOR_MUTED);
+    }
   }
 }
 
@@ -503,20 +510,37 @@ void drawTime() {
 }
 void drawHome() {
   if (drawFieldEventNotification()) { display.display(); return; }
-  display.clearDisplay();
-  drawWeatherBackground();
-  drawTime();
-  iconAt(201, 28);
+  const HomeScene scene = selectHomeScene(weatherState, isDaylight(), animationFrame);
+  drawHomeEnvironment(scene);
+  drawHomeNightSky(scene);
+  drawHomeClouds(scene);
+  drawWeatherParticles(false);
   bool sleeping = isPetSleeping();
   int y = petReacting && !sleeping ? 47 : 56;
   petAt(72, y, sleeping, blinking);
   if (petReacting && !sleeping) {
     display.beginPet(168, 69); drawHeart(0, 0); display.endPet();
   }
+  drawHomeForeground(scene);
+  drawWeatherParticles(true);
+  // Single-argument setTextColor draws glyphs transparently over the scene.
+  drawTime();
+  iconAt(201, 28);
   display.drawFastHLine(26, 182, 180, COLOR_MUTED);
+  const auto &buddy = getBuddySave();
+  const char *location = locationExists(buddy, buddy.activeLocation)
+                           ? fieldLocationName(buddy, buddy.activeLocation) : "DEFAULT";
   if (weatherValid) {
     char text[16]; formatBuddyTemperature(temperatureMilliC, text, sizeof(text), false);
-    display.setTextColor(COLOR_TEXT); centeredText(188, text, 2);
+    int temperatureWidth = strlen(text) * 12;
+    int locationWidth = strlen(location) * 6;
+    int x = (TFT_WIDTH - temperatureWidth - 12 - locationWidth) / 2;
+    display.setTextColor(COLOR_TEXT); display.setTextSize(2);
+    display.setCursor(x, 188); display.print(text);
+    display.setTextColor(COLOR_MUTED); display.setTextSize(1);
+    display.setCursor(x + temperatureWidth + 12, 192); display.print(location);
+  } else {
+    display.setTextColor(COLOR_MUTED); centeredText(188, location, 1);
   }
   display.setTextColor(COLOR_COOL);
   centeredText(216, weatherValid ? weatherName() : "HELLO", 2);

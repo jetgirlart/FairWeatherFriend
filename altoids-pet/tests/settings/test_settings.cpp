@@ -28,14 +28,14 @@ int main(){
  openJournalScreen(RECORDS_SCREEN);assert(shown("0.0 C"));openJournalScreen(JOURNAL_SCREEN);nextPage();assert(shown("0.0 C"));
  writes=nvsWrites;assert(saveBuddyUnits(UnitsId::METRIC) && nvsWrites==writes);assert(!saveBuddyUnits(static_cast<UnitsId>(2)));
  assert(upsertFieldLocation(1,"FIELD CAMP",41,-87));
- choose(2);assert(shown("ACTIVE: HOME"));
+ choose(2);assert(shown("ACTIVE: HOME") && shown("EDIT NAME/COORDS VIA USB"));
  auto observations=getBuddySave().totalObservations;auto visited=getBuddySave().fieldSitesVisited;
  handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);
- assert(getBuddySave().activeLocation==1 && shown("ACTIVE: FIELD CAMP"));
+ assert(getBuddySave().activeLocation==1 && shown("ACTIVE: FIELD CAMP") && shown("41.0000, -87.0000"));
  assert(getBuddySave().totalObservations==observations && getBuddySave().fieldSitesVisited==visited);
  handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);
  assert(getBuddySave().activeLocation==0);
- sendLine("SET_LOCATION 41.123456 -87.654321");updateSettingsScreen();assert(shown("ACTIVE: HOME"));
+ sendLine("SET_LOCATION 41.123456 -87.654321");updateSettingsScreen();assert(shown("ACTIVE: HOME") && shown("41.1235, -87.6543"));
  assert(getBuddySave().latitudeMicrodegrees==41123456 && getBuddySave().longitudeMicrodegrees==-87654321);
  writes=nvsWrites;auto located=getBuddySave();
  for(const char *line:{"SET_LOCATION 91 0","SET_LOCATION 0 -181","SET_LOCATION nan 0","SET_LOCATION inf 2","SET_LOCATION 1 2 junk","SET_LOCATION 1","SET_LOCATION 1    ","SET_LOCATION 1 x"})sendLine(line);

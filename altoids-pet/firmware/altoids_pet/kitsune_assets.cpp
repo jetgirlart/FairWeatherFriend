@@ -589,3 +589,44 @@ const uint8_t KITSUNE_FOCUS[KITSUNE_FRAME_BYTES] PROGMEM = {
 };
 #endif
 
+
+// Keep the authored character silhouette throughout every animation. Legacy
+// arrays remain available as raw assets, but are not visual fallbacks anymore.
+const uint8_t *resolveKitsuneFrame(const uint8_t *frame) {
+#ifdef FWF_PNG_HAS_KITSUNE_BLINK
+  const uint8_t *closedEyes = KITSUNE_BLINK;
+#else
+  const uint8_t *closedEyes = KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_BLINK
+  if (frame == KITSUNE_BLINK) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_LOOK_LEFT
+  if (frame == KITSUNE_LOOK_LEFT) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_LOOK_RIGHT
+  if (frame == KITSUNE_LOOK_RIGHT) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_HAPPY
+  if (frame == KITSUNE_HAPPY) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_EXCITED
+  if (frame == KITSUNE_EXCITED) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_SLEEPY
+  if (frame == KITSUNE_SLEEPY) return closedEyes;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_SLEEP
+  if (frame == KITSUNE_SLEEP) return closedEyes;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_BOUNCE
+  if (frame == KITSUNE_BOUNCE) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_LOOK_UP
+  if (frame == KITSUNE_LOOK_UP) return KITSUNE_IDLE;
+#endif
+#ifndef FWF_PNG_HAS_KITSUNE_FOCUS
+  if (frame == KITSUNE_FOCUS) return KITSUNE_IDLE;
+#endif
+  return frame;
+}

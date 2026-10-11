@@ -60,10 +60,16 @@ void expectedMask(std::vector<uint16_t>&out,const uint8_t *bits,int x,int y,uint
 }
 void expectedItem(std::vector<uint16_t>&out,GearId gear,int x,int y,bool lifted=false){
  for(auto item:items)if(item.id==gear){
+#ifndef FWF_PNG_HAS_GEAR_UMBRELLA
   if(gear==GearId::UMBRELLA){x+=72;y-=18;}
+#endif
   if(gear==GearId::BOOTS && lifted)y-=2;
   const uint8_t *packed=gear==GearId::FIELD_CAP?PNG_GEAR_FIELD_CAP_ROLES:
-                         gear==GearId::SUNGLASSES?PNG_GEAR_SUNGLASSES_ROLES:nullptr;
+                         gear==GearId::SUNGLASSES?PNG_GEAR_SUNGLASSES_ROLES:
+                         gear==GearId::UMBRELLA?PNG_GEAR_UMBRELLA_ROLES:
+                         gear==GearId::RAINCOAT?PNG_GEAR_RAINCOAT_ROLES:
+                         gear==GearId::WINTER_SCARF?PNG_GEAR_WINTER_SCARF_ROLES:
+                         gear==GearId::BOOTS?PNG_GEAR_BOOTS_ROLES:nullptr;
   if(packed){
    auto palette=gearVariantPalette(gear,0);
    const uint16_t colors[]={0,palette.outline,palette.primary,palette.accent,palette.detail};
@@ -90,12 +96,15 @@ void checkRoleOrder(const SpritePalette &palette){
 }
 int main(){
  for(uint8_t id=0;id<FUR_PALETTE_COUNT;id++)checkRoleOrder(furPalette(static_cast<FurPaletteId>(id)));
- for(auto item:items)for(uint8_t variant=0;variant<gearVariantCount(item.id);variant++)checkRoleOrder(gearVariantPalette(item.id,variant));
+ for(auto item:items)for(uint8_t variant=0;variant<gearVariantCount(item.id);variant++){
+  auto gearPalette=gearVariantPalette(item.id,variant);checkRoleOrder(gearPalette);
+  for(uint8_t fur=0;fur<FUR_PALETTE_COUNT;fur++)assert(gearPalette.primary!=furPalette(static_cast<FurPaletteId>(fur)).primary);
+ }
  checkRoleOrder(gearVariantPalette(GearId::NONE,255));
  // Active PNG gear layers use the same semantic colors and pixel transform.
- const GearId pngItems[]={GearId::FIELD_CAP,GearId::SUNGLASSES};
- const uint8_t *pngFrames[]={PNG_GEAR_FIELD_CAP_ROLES,PNG_GEAR_SUNGLASSES_ROLES};
- for(unsigned asset=0;asset<2;asset++)for(uint8_t variant=0;variant<gearVariantCount(pngItems[asset]);variant++){
+ const GearId pngItems[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::UMBRELLA,GearId::RAINCOAT,GearId::WINTER_SCARF,GearId::BOOTS};
+ const uint8_t *pngFrames[]={PNG_GEAR_FIELD_CAP_ROLES,PNG_GEAR_SUNGLASSES_ROLES,PNG_GEAR_UMBRELLA_ROLES,PNG_GEAR_RAINCOAT_ROLES,PNG_GEAR_WINTER_SCARF_ROLES,PNG_GEAR_BOOTS_ROLES};
+ for(unsigned asset=0;asset<6;asset++)for(uint8_t variant=0;variant<gearVariantCount(pngItems[asset]);variant++){
   for(auto &value:pixels)value=COLOR_WARM;
   setSpriteOrigin(72,56);const auto &palette=gearVariantPalette(pngItems[asset],variant);
   assert(palette.detail==0xFFFF);

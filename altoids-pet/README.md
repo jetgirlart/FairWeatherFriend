@@ -20,13 +20,14 @@ passive piezo. The SH1107/I2C display is replaced; power/charging is unchanged.
 | Button B / wake | D1 | 2 | Button to GND |
 | Button C | D2 | 3 | Button to GND |
 | Optional passive piezo | D3 | 4 | D3 → 220 Ω → piezo +; piezo − → GND |
-| TFT RES/reset | D4 | 5 | RES |
+| TFT RES/reset | D4 | 5 | RES; dedicated hardware reset |
 | Future Hall sensor | D5 | 6 | Reserved, unused |
 | TFT DC | D6 | 43 | DC |
-| TFT CS | D7 | 44 | CS |
+| Future GNSS | D7 | 44 | Free; no TFT chip-select GPIO |
 | TFT SCL/clock | D8 | 7 | SCL (SPI SCK) |
 | TFT BLK/backlight | D9 | 8 | BLK, active HIGH control |
 | TFT SDA/data | D10 | 9 | SDA (SPI MOSI) |
+| TFT CS | GND | — | Permanently selected; dedicated SPI bus only |
 | TFT supply | 3V3 | — | VCC |
 | Common ground | GND | — | TFT/buttons/piezo GND |
 
@@ -38,6 +39,41 @@ The XIAO hardware handles charging; firmware does not change it.
 
 Display pins/dimensions/rotation/SPI speed live in `firmware/altoids_pet/hardware.h`.
 `TFT_ROTATION` defaults to 0; change only this constant to rotate the panel.
+
+### TFT wiring with grounded CS and reset on D4
+
+The firmware passes `TFT_CS = -1` and `TFT_RST = D4` to the installed Adafruit
+ST7789 driver. D7/GPIO44 is free for future GNSS; D4/GPIO5 remains dedicated TFT
+reset, D5/GPIO6 remains reserved for Hall sensing, and D9/GPIO8 remains the
+held-LOW sleep backlight control.
+
+With USB and battery disconnected, move only the TFT CS wire from D7 to GND.
+Keep TFT RES connected to D4. Keep VCC at 3V3, DC at D6, SCK/SCL at D8,
+MOSI/SDA at D10, and BLK at D9. No reset-button soldering is needed. Do not tie
+RES to 3V3 or the XIAO EN signal with this configuration: D4 drives the panel's
+reset pulse during initialization.
+
+The controller permits permanently grounded CS, and the library skips CS GPIO
+access when its pin is -1. This dedicates D8/D10's SPI bus to the TFT; future
+GNSS should use another interface rather than sharing those SPI wires. Hardware
+reset plus software reset/sleep-out still run on every boot/deep-sleep wake.
+The SPI clock is primed to mode 3's idle-HIGH level before the D4 reset, so a
+polarity change does not introduce an extra first clock edge while CS is LOW.
+This grounded-CS compatibility adjustment requires physical verification on the
+module. For a known-working fallback, reconnect CS to D7 (with power disconnected),
+set `TFT_CS = D7` and `TFT_SPI_MODE = 0` together, and rebuild/upload.
+
+SPI mode changes from 0 to 3 for this compatibility test. Rendering, rotation,
+40 MHz transfer speed, tile updates, and backlight/sleep commands are unchanged.
+
+References: [ST7789V datasheet, section 8.16](https://dl.espressif.com/dl/schematics/ST7789V_SPEC_V1.0.pdf),
+[Adafruit ST7789 initialization](https://github.com/adafruit/Adafruit-ST7735-Library/blob/master/Adafruit_ST7789.cpp),
+and [Adafruit SPI GPIO guards](https://github.com/adafruit/Adafruit-GFX-Library/blob/master/Adafruit_SPITFT.cpp).
+
+After rewiring and your own upload, test USB/battery cold boots, the reset button,
+repeated deep-sleep/B wakes, backlight-off sleep, and normal colors/animations/
+minute updates. Host tests verify pin assignments and framebuffer behavior;
+physical hardware verifies the grounded-CS wiring. No automatic upload is performed.
 
 Each button produces one immediate press-down event and stays latched through
 holding and release bounce. It rearms only after HIGH is observed continuously
@@ -561,8 +597,8 @@ power or button policy. No save-reset command is provided.
 
 ## Preserved display, companion, timer, and sound behavior
 
-The ST7789 uses hardware SPI: `SPI.begin(D8, -1, D10, D7)`,
-`init(240, 240, SPI_MODE0)`, rotation 0, and a 40 MHz transfer clock. The driver
+The ST7789 uses hardware SPI: `SPI.begin(D8, -1, D10, -1)`,
+`init(240, 240, TFT_SPI_MODE)` (mode 3 for grounded CS), rotation 0, and a 40 MHz transfer clock. The driver
 handles the controller's 240×240 address offset. Rotation is isolated in
 `hardware.h`. The firmware cannot identify/check panel presence through this
 write-only connection; wiring and orientation require physical verification.
@@ -1710,7 +1746,7 @@ or save-schema change is needed.
 The cap and sunglasses PNGs now replace their legacy overlays using the same
 packed palette-role format, origin, offsets and layer order. Transparent pixels
 leave the base pet untouched. Removing either source and regenerating restores
-its embedded fallback. Other gear sources are converted for future integration.
+its embedded fallback. Other registered gear PNGs also activate automatically when present.
 DETAIL (`#00FF00`) always renders pure white (`0xFFFF`), the lightest color, in
 all fur and gear palettes. Source PNGs are never modified.
 
@@ -1752,3 +1788,97 @@ Sprite palette brightness is ordered consistently: OUTLINE is black (`0x0000`),
 PRIMARY is a medium tone, SECONDARY/ACCENT is a lighter tone, and DETAIL is white
 (`0xFFFF`). Source marker colors select these roles; they are not literal display
 colors. The same ordering applies to every fur palette and gear variant.
+
+New source layers: blink, look-left/right, happy and focus are explicitly listed
+in `assets/buddy/layers.json`. They compose over the source IDLE PNG at conversion
+time; transparent overlay pixels retain the body. `clearRegions` lists
+`[x,y,width,height,role]` patches that clear the old expression before applying
+the new one. Remove a frame's entry when replacing it with a complete-body PNG.
+Unlisted frames remain complete-frame sources; no missing artwork is synthesized.
+
+All registered gear PNGs now render when present, including weather accessories.
+`scarf.png` aliases WINTER_SCARF and `bootsf.png` aliases BOOTS. Keeping an alias
+and its canonical filename together is an error. Gear PNGs share the pet's 48x48
+canvas; the authored umbrella uses that anchor rather than the old bitmap offset.
+Legacy art remains the fallback for missing gear. Gear primary colors are distinct
+from every buddy fur primary while retaining the medium/light/white role ordering.
+
+## Authoritative HOME scenery
+
+HOME uses the untouched 240×240 PNG sources in `assets/backgrounds/`:
+`background.png` (the environment/base), `foreground.png`, `clouds_light.png`,
+`clouds_heavy.png`, and `storm_clouds.png`. Regenerate from the repository root:
+
+```sh
+python3 tools/convert_sprites.py
+python3 tools/convert_sprites.py --check
+```
+
+The converter validates dimensions, exact semantic colors and binary alpha;
+missing required backgrounds fail. It preserves every pixel's position and
+transparent margins. Generated `firmware/altoids_pet/generated/background_assets.h`
+is marked DO NOT EDIT. Five packed 4-bit layers use 144,000 flash bytes; thirteen
+PROGMEM scene palettes use 156 bytes. No second framebuffer is added. See
+[the converter documentation](../tools/README.md#home-background-assets).
+
+`background.cpp` selects rendering-only palettes from the existing `isDaylight()`
+(sunrise/sunset with the existing fallback) and weather state:
+
+| Weather | Cloud asset | Day/night treatment |
+| --- | --- | --- |
+| Clear | None | Clear sky; real moon phase and existing twinkle cadence at night |
+| Mainly clear / partly cloudy | Light | Clear sky; moon/stars behind clouds at night |
+| Cloudy | Heavy | Overcast day/night |
+| Rain | Heavy | Rain day/night, existing rain particles |
+| Storm | Storm | Dark day/night, existing rain/lightning cadence; two-frame palette brightening |
+| Snow | Heavy | Cold day/night, existing snow particles |
+| Fog | None | Muted day/night, existing fog particles |
+
+Composition order is sky → environment → moon/stars → clouds → background
+particles/lightning → buddy and its existing gear layers → foreground → foreground
+particles → HOME text/status. Odd/even particles share the two depth planes
+without increasing their counts or changing their coordinates/timing. Hearts
+remain with the buddy. Text and icons retain their current coordinates. HOME text draws transparently
+over the scenery, without backing rectangles. Other screens retain their appearance.
+One completed RAM composition is passed to the existing changed-tile transport;
+no intermediate blank frame is sent. Palette selection does not alter weather,
+clock, saves or any animation state machine.
+
+Background palettes are independent of fur/gear palettes: environment PRIMARY is
+sky, cloud roles select cloud shades, and foreground DETAIL selects grass. No
+art is duplicated per palette. The supplied foreground begins near y=211, below
+the existing buddy feet; its alignment is intentionally preserved rather than
+moving the artwork or buddy to force an overlap.
+
+After manually uploading a tested build, check on the physical ST7789:
+
+1. Clear day: exact cloud-free base, original buddy size/position, all fur colors,
+   all gear combinations, blink/look/bounce/interaction and weather reactions.
+2. Clear and mostly clear night: moon matches its real phase; stars twinkle;
+   light clouds coexist with them. Sleep pose and its gear remain aligned.
+3. Cloudy/rain/snow: correct heavy-cloud artwork; rain/snow retain their cadence.
+   Storm: correct storm artwork, brief brightening and bolt, no black flash.
+4. Fog: muted scene with the existing moving fog. Sunrise/sunset changes the
+   scene palette without changing the clock or weather data.
+5. Foreground: exact source alignment/transparency, clear readable clock,
+   temperature/location and weather text. No stray magenta/cyan/green tokens.
+6. Let a minute change while awake; exercise B, menus, focus timer, sleep/wake.
+   Check for flashing, slowed controls, stale tiles or altered unrelated screens.
+
+Host tests cover source integrity, strict conversion, scene choices, moon/stars,
+cloud selection, foreground occlusion/UI precedence and lightning composition.
+Weather cases on hardware require actual available conditions; this feature does
+not add a debug menu or fake weather observations.
+
+
+### Missing buddy animation frames
+
+Buddy rendering now stays on the authored character throughout all states.
+If `kitsune_sleep.png` or `kitsune_sleepy.png` is absent, the renderer reuses the
+available authored BLINK frame; if `kitsune_look_up.png` is absent, it reuses IDLE.
+Other missing buddy expressions likewise reuse IDLE (including BLINK if its PNG
+is missing). This supersedes the earlier legacy-buddy fallback described above.
+The existing state machine, sleep schedule, motion, palettes and gear anchors
+remain unchanged. No source PNG or substitute artwork is generated. Add the
+missing 48×48 semantic PNG and run `python3 tools/convert_sprites.py` to activate
+its dedicated frame. Missing gear PNG fallback behavior remains unchanged.

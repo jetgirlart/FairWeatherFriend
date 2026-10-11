@@ -253,9 +253,8 @@ is required; removing it fails instead of silently reverting.
 
 The gear registry accepts `field_cap.png`, `sunglasses.png`, `umbrella.png`,
 `raincoat.png`, `winter_scarf.png`, `winter_coat.png`, `boots.png`. Gear assets use
-exactly the same roles. Cap and sunglasses PNGs replace their embedded overlays
-when present; missing sources retain the legacy fallback. Other registered gear
-is converted in preparation for later renderer integration. The PNG renderer uses
+exactly the same roles. All registered gear PNGs replace their embedded overlays
+when present; missing sources retain the legacy fallback. The PNG renderer uses
 `gearVariantPalette`, preserves transparent pixels without applying a legacy mask,
 and shares the existing pet origin, offsets, crouch transform and layering.
 DETAIL (`#00FF00` in source artwork) maps to pure white (`0xFFFF`) in every fur
@@ -277,3 +276,93 @@ Sprite palette brightness is ordered consistently: OUTLINE is black (`0x0000`),
 PRIMARY is a medium tone, SECONDARY/ACCENT is a lighter tone, and DETAIL is white
 (`0xFFFF`). Source marker colors select these roles; they are not literal display
 colors. The same ordering applies to every fur palette and gear variant.
+
+New source layers: blink, look-left/right, happy and focus are explicitly listed
+in `assets/buddy/layers.json`. They compose over the source IDLE PNG at conversion
+time; transparent overlay pixels retain the body. `clearRegions` lists
+`[x,y,width,height,role]` patches that clear the old expression before applying
+the new one. Remove a frame's entry when replacing it with a complete-body PNG.
+Unlisted frames remain complete-frame sources; no missing artwork is synthesized.
+
+All registered gear PNGs now render when present, including weather accessories.
+`scarf.png` aliases WINTER_SCARF and `bootsf.png` aliases BOOTS. Keeping an alias
+and its canonical filename together is an error. Gear PNGs share the pet's 48x48
+canvas; the authored umbrella uses that anchor rather than the old bitmap offset.
+Legacy art remains the fallback for missing gear. Gear primary colors are distinct
+from every buddy fur primary while retaining the medium/light/white role ordering.
+
+The home temperature row displays the active saved location name. Use a name such
+as `CHICAGO, IL` (maximum 15 characters) to show city/state. The label is configured
+by you; firmware does not reverse-geocode coordinates. Confirm coordinates with
+`python3 tools/fairweather_backup.py locations list` before editing a location.
+
+Jump artwork filenames: `assets/buddy/kitsune_bounce.png` replaces idle/sunny
+bounces; `assets/buddy/kitsune_excited.png` replaces the B-button hop/heart pose
+and EXCITED mood. Use complete 48x48 RGBA role-color frames unless explicitly
+configured as an IDLE overlay in `assets/buddy/layers.json`, then run
+`python3 tools/convert_sprites.py` before compiling. Timing stays in the existing
+pet state machine.
+
+### Correcting the default HOME location
+
+HOME is an initial label with the configured coordinates; it is not a detected
+city. SETTINGS → LOCATION shows the highlighted site's coordinates and selects
+saved sites with A/B. Names and coordinates are edited over USB. Existing NVS
+locations take precedence over firmware defaults; changing `config.h` does not
+replace an existing HOME save.
+
+1. Connect USB, wake with B, and close Arduino Serial Monitor.
+2. Run `python3 tools/fairweather_backup.py locations list` to find HOME's slot.
+3. Update that slot using your city/state label and actual decimal coordinates:
+   `python3 tools/fairweather_backup.py locations set SLOT "CITY, ST" LATITUDE LONGITUDE`.
+4. If necessary, select it with
+   `python3 tools/fairweather_backup.py locations active SLOT` or SETTINGS → LOCATION.
+
+Replacing active coordinates invalidates the weather/sunrise/sunset cache. The
+next normal online sync uses the corrected coordinates. Renaming alone preserves
+that cache. Buddy progress is preserved; no factory reset is necessary.
+
+## HOME background assets
+
+The same `python3 tools/convert_sprites.py` command also generates
+`altoids-pet/firmware/altoids_pet/generated/background_assets.h`. Use `--check`
+for validation without writes. No external Python dependency is needed.
+
+Required sources in `altoids-pet/assets/backgrounds/` are `background.png`
+(or `environment.png`, never both), `foreground.png`, `clouds_light.png`,
+`clouds_heavy.png`, and `storm_clouds.png`. Every source must be exactly 240×240
+8-bit RGBA. Alpha must be 0 or 255; opaque pixels must use the same exact four
+semantic RGB tokens documented above. Unsupported colors/alpha, invalid PNGs,
+wrong dimensions, or missing required backgrounds fail before any output is
+written. Transparent pixels retain their positions; hidden RGB is irrelevant.
+Sources are never rewritten, cropped, scaled, shifted, or quantized.
+
+Background indices use the sprite encoding (0 transparent, 1 outline, 2 primary,
+3 secondary, 4 detail), but **background materials have their own palettes** in
+`background.cpp`; they never use buddy fur or gear-variant palettes. Environment
+PRIMARY is sky. Cloud PRIMARY/SECONDARY/DETAIL are lower/middle/highlight shades.
+Foreground PRIMARY/DETAIL are ground/grass. Source colors are semantic tokens,
+not final display colors. This distinction allows the existing foreground DETAIL
+art to be grass while buddy/gear DETAIL remains their brightest facial/highlight
+color. Replace the PNGs to change artwork; change scene tables to change scenery
+colors.
+
+Each native 240×240 layer packs two 4-bit indices per byte (left pixel high nibble)
+into 28,800 PROGMEM bytes; all five layers use **144,000 bytes**. Thirteen shared
+scene palettes use another **156 bytes**. Rendering uses the existing 115,200-byte
+framebuffer; no additional scene-sized RAM buffer or per-weather artwork copies
+are allocated. Checked-in generated assets are consumed by Arduino; regenerate
+before compiling after source changes.
+
+
+### Missing buddy animation frames
+
+Buddy rendering now stays on the authored character throughout all states.
+If `kitsune_sleep.png` or `kitsune_sleepy.png` is absent, the renderer reuses the
+available authored BLINK frame; if `kitsune_look_up.png` is absent, it reuses IDLE.
+Other missing buddy expressions likewise reuse IDLE (including BLINK if its PNG
+is missing). This supersedes the earlier legacy-buddy fallback described above.
+The existing state machine, sleep schedule, motion, palettes and gear anchors
+remain unchanged. No source PNG or substitute artwork is generated. Add the
+missing 48×48 semantic PNG and run `python3 tools/convert_sprites.py` to activate
+its dedicated frame. Missing gear PNG fallback behavior remains unchanged.

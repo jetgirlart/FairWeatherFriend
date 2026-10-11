@@ -48,13 +48,19 @@ void draw() {
   } else if (settingsPage == Page::LOCATION) {
     text(12, "LOCATION", 3); char row[40];
     snprintf(row, sizeof(row), "ACTIVE: %s", fieldLocationName(buddy, buddy.activeLocation)); text(43, row, 1);
+    if (locationExists(buddy, locationSelection)) {
+      const auto &site = buddy.locations[locationSelection];
+      snprintf(row, sizeof(row), "%.4f, %.4f", site.latitudeMicrodegrees / 1000000.0,
+               site.longitudeMicrodegrees / 1000000.0);
+      text(54, row, 1);
+    }
     for (uint8_t i = 0; i < FIELD_LOCATION_COUNT; ++i) if (buddy.locations[i].used) {
       int y = 65 + i * 17;
       snprintf(row, sizeof(row), "%u %s%s", i, buddy.locations[i].name, i == buddy.activeLocation ? " *" : "");
       if (i == locationSelection) display.drawRect(3, y - 1, 234, 18, COLOR_COOL);
       text(y, row, 2);
     }
-    if (settingsSaveFailed) text(203, "SAVE FAILED", 1);
+    text(203, settingsSaveFailed ? "SAVE FAILED" : "EDIT NAME/COORDS VIA USB", 1);
     text(222, "A:NEXT B:ACTIVE C:BACK", 1);
   } else if (settingsPage == Page::EXPORT || settingsPage == Page::IMPORT) {
     bool importing = settingsPage == Page::IMPORT;
