@@ -366,3 +366,19 @@ The existing state machine, sleep schedule, motion, palettes and gear anchors
 remain unchanged. No source PNG or substitute artwork is generated. Add the
 missing 48×48 semantic PNG and run `python3 tools/convert_sprites.py` to activate
 its dedicated frame. Missing gear PNG fallback behavior remains unchanged.
+
+Location commands report `LOCATION_ERROR` with a specific reason: invalid slot,
+latitude, longitude or name; protected/unavailable saves; pending import; or
+failed persistence. For example, a direct Arduino Serial Monitor correction is:
+
+```text
+UPSERT_LOCATION 0 32.664021 -95.487892 Mineola, TX
+ACTIVE_LOCATION 0
+LIST_LOCATIONS
+```
+
+Send each line separately at 115200 baud with a newline. The older
+`SET_LOCATION <latitude> <longitude>` command updates only the active site's
+coordinates. Both paths preserve buddy progress and invalidate active-location
+weather only after a successful save. Neither command automatically discovers
+where the device is located.

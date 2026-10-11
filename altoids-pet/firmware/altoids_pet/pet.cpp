@@ -37,10 +37,7 @@ unsigned long interactionMoodStarted = 0;
 void updatePetState() {
   if (!petInitialized) return;
   unsigned long nowMs = millis();
-  if (isPetSleeping()) {
-    petState.mood = PetMood::SLEEPY;
-    interactionMoodActive = false;
-  } else if (interactionMoodActive && nowMs - interactionMoodStarted < HAPPY_DURATION_MS) {
+  if (interactionMoodActive && nowMs - interactionMoodStarted < HAPPY_DURATION_MS) {
     petState.mood = petReacting ? PetMood::EXCITED : PetMood::HAPPY;
   } else {
     interactionMoodActive = false;
@@ -461,13 +458,10 @@ void updateAnimations() {
 
 
 bool isPetSleeping() {
-  if (!timeValid) {
-    return false;
-  }
-
-  return
-    currentHour >= PET_SLEEP_HOUR ||
-    currentHour < PET_WAKE_HOUR;
+  // The companion is awake whenever firmware is running, regardless of local
+  // time. Keep the shared query so rendering/audio/event callers stay aligned.
+  // Device inactivity sleep and button wake are exclusively handled by power.
+  return false;
 }
 
 void initializeAnimations() {

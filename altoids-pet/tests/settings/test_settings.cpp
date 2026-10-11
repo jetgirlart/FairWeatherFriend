@@ -6,6 +6,8 @@ void stopSound(){silenceCalls++;}
 void drawHome(){display.clearDisplay();display.setCursor(0,0);display.print("HOME");display.display();}
 double configuredLatitude(){const auto &s=getBuddySave();return s.locationConfigured?s.latitudeMicrodegrees/1000000.0:32.0;}
 double configuredLongitude(){const auto &s=getBuddySave();return s.locationConfigured?s.longitudeMicrodegrees/1000000.0:-95.0;}
+unsigned setupStarts=0;
+bool beginBuddySetup(){if(!buddyNeedsSetup())return false;++setupStarts;currentScreen=BUDDY_SETUP_SCREEN;return true;}
 #include "../../firmware/altoids_pet/settings_ui.cpp"
 void sendLine(const std::string &line){for(char c:line)Serial.input.push_back(c);Serial.input.push_back('\n');while(Serial.available())updateBuddySerial();}
 void choose(unsigned index){openSettings();for(unsigned i=0;i<index;i++)handleSettingsButtons(true,false,false);handleSettingsButtons(false,true,false);}
@@ -74,7 +76,34 @@ int main(){
  handleSettingsButtons(false,false,true);handleSettingsButtons(false,false,true);assert(currentScreen==MENU);
  // Explicit import outside the screen is rejected; Serial cannot overwrite.
  writes=nvsWrites;sendLine("IMPORT_BUDDY "+compact);assert(!importPending && nvsWrites==writes);
+ // Reset is opt-in, defaults to KEEP, and preserves owner configuration.
+ fakeEpoch+=86400;assert(recordWeatherObservation({fakeEpoch,1000,61,WeatherCategory::RAIN}));
+ auto beforeReset=getBuddySave();writes=nvsWrites;
+ choose(6);assert(shown("START OVER?") && shown("KEEP FRIEND") && !settings_detail::draft);
+ assert(buddySaveChecksum(beforeReset)==buddySaveChecksum(getBuddySave()) && writes==nvsWrites);
+ handleSettingsButtons(true,false,false);handleSettingsButtons(false,false,true);
+ assert(writes==nvsWrites && buddySaveChecksum(beforeReset)==buddySaveChecksum(getBuddySave()));
+ choose(6);handleSettingsButtons(false,true,false);assert(settings_detail::settingsPage==settings_detail::Page::LIST);
+ assert(writes==nvsWrites && setupStarts==0);
+ choose(6);handleSettingsButtons(true,false,false);failWrite=true;handleSettingsButtons(false,true,false);
+ assert(shown("SAVE FAILED") && buddySaveChecksum(beforeReset)==buddySaveChecksum(getBuddySave()));
+ assert(writes==nvsWrites && setupStarts==0);failWrite=false;
+ fakeEpoch+=123;handleSettingsButtons(false,true,false);
+ assert(nvsWrites==writes+1 && setupStarts==1 && currentScreen==BUDDY_SETUP_SCREEN);
+ BuddySaveData expected;
+ expected.createdAt=fakeEpoch;expected.soundEnabled=beforeReset.soundEnabled;expected.units=beforeReset.units;
+ expected.locationConfigured=beforeReset.locationConfigured;
+ expected.latitudeMicrodegrees=beforeReset.latitudeMicrodegrees;expected.longitudeMicrodegrees=beforeReset.longitudeMicrodegrees;
+ expected.activeLocation=beforeReset.activeLocation;
+ for(unsigned i=0;i<FIELD_LOCATION_COUNT;++i){expected.locations[i]=beforeReset.locations[i];expected.locations[i].visited=false;}
+ assert(buddySaveChecksum(expected)==buddySaveChecksum(getBuddySave()) && buddyNeedsSetup());
+ assert(takeNewAchievement()==AchievementId::COUNT && takeNewFieldEvent()==FieldEventId::COUNT);
+ initializeJournal();assert(buddyNeedsSetup() && buddySaveChecksum(expected)==buddySaveChecksum(getBuddySave()));
+ assert(confirmBuddySetup(FurPaletteId::BLUE));initializeJournal();assert(!buddyNeedsSetup() && getBuddySave().furPalette==FurPaletteId::BLUE);
+ // Runtime and storage protections also apply to explicit resets.
  storage["fwf-buddy"]["save0"]=std::vector<uint8_t>(204,0);initializeJournal();assert(!journalAvailable());
+ assert(!resetBuddy());
+ choose(6);assert(shown("STORAGE PROTECTED"));writes=nvsWrites;handleSettingsButtons(true,true,false);assert(nvsWrites==writes);
  assert(!saveBuddySound(true) && !saveBuddyUnits(UnitsId::US) && !saveBuddyLocation(0,0));
  puts("PASS: Settings controls/bounds/cancel/failed writes, persisted sound/units/location, display conversions, export read-only, explicit-button import/cancel/expiry, protected saves and unchanged-frame suppression.");
 }

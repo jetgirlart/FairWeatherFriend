@@ -68,6 +68,17 @@ int main(){
  blank();Serial.output.clear();send("UPSERT_LOCATION 1 40 -100 TRAVEL CAMP");assert(Serial.output.find("LOCATION_OK saved")!=std::string::npos);
  send("ACTIVE_LOCATION 1");assert(getBuddySave().activeLocation==1 && getBuddySave().totalObservations==0);
  send("DELETE_LOCATION 1");assert(locationExists(getBuddySave(),1));send("DELETE_LOCATION 1 0");assert(!locationExists(getBuddySave(),1));
+ // Exact reported decimal coordinates/name, plus actionable validation errors.
+ send("UPSERT_LOCATION 0 32.664021 -95.487892 Mineola, TX");
+ assert(std::string(getBuddySave().locations[0].name)=="Mineola, TX");
+ assert(getBuddySave().locations[0].latitudeMicrodegrees==32664021 && getBuddySave().locations[0].longitudeMicrodegrees==-95487892);
+ auto unchanged=buddySaveChecksum(getBuddySave());auto beforeWrites=nvsWrites;
+ for(const char *command:{"UPSERT_LOCATION 8 32 -95 BAD","UPSERT_LOCATION -1 32 -95 BAD", "UPSERT_LOCATION 0 x -95 HOME", "UPSERT_LOCATION 0 91 -95 HOME", "UPSERT_LOCATION 0 32 nan HOME", "UPSERT_LOCATION 0 32 -181 HOME", "UPSERT_LOCATION 0 32 -95", "UPSERT_LOCATION 0 32 -95 HOME ", "UPSERT_LOCATION 0 32 -95 abcdefghijklmnop"}) {
+  Serial.output.clear();send(command);assert(Serial.output.find("LOCATION_ERROR ")!=std::string::npos);
+  assert(buddySaveChecksum(getBuddySave())==unchanged && nvsWrites==beforeWrites);
+ }
+ failWrite=true;Serial.output.clear();send("UPSERT_LOCATION 0 33 -95 Mineola, TX");failWrite=false;
+ assert(Serial.output.find("LOCATION_ERROR could not save")!=std::string::npos && buddySaveChecksum(getBuddySave())==unchanged);
  Serial.output.clear();send("LIST_LOCATIONS");assert(Serial.output.find("LOCATIONS {")!=std::string::npos);
  puts("PASS: eight slots, names/coordinates, persisted switch/delete/reuse, live-only visits, all record locations/ties, v6 NVS/JSON migration, full JSON/import validation and USB commands.");
 }

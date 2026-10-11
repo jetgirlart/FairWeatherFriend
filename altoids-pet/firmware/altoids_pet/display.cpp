@@ -74,106 +74,27 @@ void drawSun(int x, int y) {
 // MOON
 // ==================================================
 
-void drawMoonPhase(
-  int x,
-  int y,
-  MoonPhase phase,
-  uint16_t background = COLOR_BACKGROUND
-) {
-
+void drawMoonPhase(int x, int y, MoonPhase phase) {
   const int radius = 7;
-
-  display.fillCircle(
-    x,
-    y,
-    radius,
-    COLOR_WARM
-  );
-
-  switch (phase) {
-
-    case MOON_NEW:
-
-      display.fillCircle(
-        x,
-        y,
-        radius - 1,
-        background
-      );
-
-      break;
-
-    case MOON_WAXING_CRESCENT:
-
-      display.fillCircle(
-        x - 3,
-        y,
-        radius,
-        background
-      );
-
-      break;
-
-    case MOON_FIRST_QUARTER:
-
-      display.fillRect(
-        x - radius,
-        y - radius,
-        radius,
-        radius * 2 + 1,
-        background
-      );
-
-      break;
-
-    case MOON_WAXING_GIBBOUS:
-
-      display.fillCircle(
-        x - 7,
-        y,
-        radius,
-        background
-      );
-
-      break;
-
-    case MOON_FULL:
-
-      break;
-
-    case MOON_WANING_GIBBOUS:
-
-      display.fillCircle(
-        x + 7,
-        y,
-        radius,
-        background
-      );
-
-      break;
-
-    case MOON_LAST_QUARTER:
-
-      display.fillRect(
-        x,
-        y - radius,
-        radius + 1,
-        radius * 2 + 1,
-        background
-      );
-
-      break;
-
-    case MOON_WANING_CRESCENT:
-
-      display.fillCircle(
-        x + 3,
-        y,
-        radius,
-        background
-      );
-
-      break;
+  // Draw only the lit mask. Unlit pixels and everything outside the lunar
+  // silhouette are transparent: never erase scenery with a background color.
+  for (int dy = -radius; dy <= radius; ++dy) {
+    for (int dx = -radius; dx <= radius; ++dx) {
+      int distance = dx * dx + dy * dy;
+      if (distance > radius * radius) continue;
+      bool lit = true;
+      switch (phase) {
+        case MOON_NEW: lit = distance > (radius - 1) * (radius - 1); break;
+        case MOON_WAXING_CRESCENT: lit = (dx + 3) * (dx + 3) + dy * dy > radius * radius; break;
+        case MOON_FIRST_QUARTER: lit = dx >= 0; break;
+        case MOON_WAXING_GIBBOUS: lit = (dx + 7) * (dx + 7) + dy * dy > radius * radius; break;
+        case MOON_FULL: break;
+        case MOON_WANING_GIBBOUS: lit = (dx - 7) * (dx - 7) + dy * dy > radius * radius; break;
+        case MOON_LAST_QUARTER: lit = dx < 0; break;
+        case MOON_WANING_CRESCENT: lit = (dx - 3) * (dx - 3) + dy * dy > radius * radius; break;
+      }
+      if (lit) display.drawPixel(x + dx, y + dy, COLOR_WARM);
+    }
   }
 }
 
@@ -445,9 +366,8 @@ void drawHomeNightSky(const HomeScene &scene) {
   const int stars[][2] = {{24,62},{204,78},{38,142},{54,92},{191,142},{219,156}};
   for (int i = 0; i < 6; ++i) {
     bool visible = i < 3 || (i < 5 ? animationFrame % 4 < 2 : animationFrame % 8 < 4);
-    if (visible) display.fillRect(stars[i][0], stars[i][1], 2, 2, COLOR_WARM);
+    if (visible) display.fillRect(stars[i][0], stars[i][1], 2, 2, COLOR_DETAIL);
   }
-  drawMoonPhase(201, 92, currentMoonPhase, homeSkyColor(scene));
 }
 void drawWeatherParticles(bool foreground) {
   if (weatherState == WEATHER_RAIN || weatherState == WEATHER_STORM) {
@@ -518,14 +438,11 @@ void drawHome() {
   bool sleeping = isPetSleeping();
   int y = petReacting && !sleeping ? 47 : 56;
   petAt(72, y, sleeping, blinking);
-  if (petReacting && !sleeping) {
-    display.beginPet(168, 69); drawHeart(0, 0); display.endPet();
-  }
   drawHomeForeground(scene);
   drawWeatherParticles(true);
   // Single-argument setTextColor draws glyphs transparently over the scene.
   drawTime();
-  iconAt(201, 28);
+  iconAt(201, 28); // Keep the larger weather-icon moon; no separate scene moon.
   display.drawFastHLine(26, 182, 180, COLOR_MUTED);
   const auto &buddy = getBuddySave();
   const char *location = locationExists(buddy, buddy.activeLocation)
@@ -738,13 +655,7 @@ void drawFocusTimer(uint32_t seconds) {
   centeredText(55, text, 5);
   bool sleeping = isPetSleeping();
   petAt(72, 88, sleeping, false);
-  if (!sleeping) {
-    display.fillRect(94, 185, 58, 22, COLOR_BACKGROUND);
-    display.drawRect(94, 185, 58, 22, COLOR_WARM);
-    display.drawLine(123, 185, 123, 205, COLOR_WARM);
-    display.drawLine(100, 192, 116, 192, COLOR_WARM);
-    display.drawLine(130, 192, 146, 192, COLOR_WARM);
-  }
+  // The authored FOCUS sprite includes its activity; no legacy book overlay.
   display.display();
 }
 void drawTimerDone(uint32_t frame) {

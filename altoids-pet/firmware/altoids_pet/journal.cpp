@@ -58,9 +58,28 @@ void processSerialLine() {
   } else if (strcmp(serialLine, "LIST_LOCATIONS") == 0) {
     listFieldLocations(Serial);
   } else if (strncmp(serialLine, "UPSERT_LOCATION ", 16) == 0) {
-    unsigned id; double latitude, longitude; int consumed = 0;
-    bool valid = sscanf(serialLine + 16, "%u %lf %lf %n", &id, &latitude, &longitude, &consumed) == 3 && consumed > 0 && id < FIELD_LOCATION_COUNT;
-    if (!valid || !upsertFieldLocation(uint8_t(id), serialLine + 16 + consumed, latitude, longitude)) Serial.println("LOCATION_ERROR invalid location or save failed");
+    // Explicit token parsing avoids scanf float/%n dependencies on embedded
+    // C libraries and reports validation separately from storage failures.
+    const char *cursor = serialLine + 16; char *end = nullptr;
+    const char *error = nullptr;
+    unsigned long id = strtoul(cursor, &end, 10);
+    if (*cursor < '0' || *cursor > '9' || end == cursor || *end != ' ' || id >= FIELD_LOCATION_COUNT)
+      error = "slot must be 0-7";
+    cursor = end;
+    double latitude = strtod(cursor, &end);
+    if (!error && (end == cursor || *end != ' ' || !isfinite(latitude) || latitude < -90 || latitude > 90))
+      error = "latitude must be -90 to 90";
+    cursor = end;
+    double longitude = strtod(cursor, &end);
+    if (!error && (end == cursor || *end != ' ' || !isfinite(longitude) || longitude < -180 || longitude > 180))
+      error = "longitude must be -180 to 180";
+    const char *name = end;
+    while (*name == ' ') ++name;
+    if (!error && !validLocationName(name)) error = "name must be 1-15 printable characters, without trailing spaces";
+    if (!available || !buddySaveWritable()) error = "protected/unavailable save";
+    else if (importPending) error = "cancel pending buddy import first";
+    if (error) Serial.printf("LOCATION_ERROR %s\n", error);
+    else if (!upsertFieldLocation(uint8_t(id), name, latitude, longitude)) Serial.println("LOCATION_ERROR could not save; current buddy preserved");
     else Serial.println("LOCATION_OK saved");
   } else if (strncmp(serialLine, "ACTIVE_LOCATION ", 16) == 0) {
     unsigned id; char extra;
@@ -132,6 +151,34 @@ bool confirmBuddySetup(FurPaletteId palette) {
   if (!persistBuddySave(next)) return false;
   buddy = next; dirty = false; retryPending = false;
   Serial.printf("Buddy setup saved: fur palette %u. Ready for field work!\n", static_cast<uint8_t>(palette));
+  return true;
+}
+
+bool resetBuddy() {
+  if (!available || !buddySaveWritable()) return false;
+  BuddySaveData fresh;
+  fresh.soundEnabled = buddy.soundEnabled; fresh.units = buddy.units;
+  fresh.locationConfigured = buddy.locationConfigured;
+  fresh.latitudeMicrodegrees = buddy.latitudeMicrodegrees;
+  fresh.longitudeMicrodegrees = buddy.longitudeMicrodegrees;
+  fresh.activeLocation = buddy.activeLocation;
+  for (uint8_t i = 0; i < FIELD_LOCATION_COUNT; ++i) {
+    fresh.locations[i] = buddy.locations[i]; fresh.locations[i].visited = false;
+  }
+  if (fresh.activeLocation == UNKNOWN_LOCATION) initializeDefaultFieldLocation(fresh);
+  if (timeValid) {
+    int64_t now = static_cast<int64_t>(time(nullptr));
+    if (localDate(now) != 0) fresh.createdAt = now;
+  }
+  // The existing atomic, verified, alternating NVS checkpoints protect the
+  // current friend if the write fails. Never erase the Preferences namespace.
+  if (!persistBuddySave(fresh)) {
+    Serial.println("Reset Friend failed; current friend preserved."); return false;
+  }
+  buddy = fresh; dirty = false; retryPending = false;
+  endBuddyTransfer(); serialLength = 0; serialOverflow = false;
+  newFieldEvents = 0; newAchievements = 0; memset(newGearVariants, 0, sizeof(newGearVariants));
+  Serial.println("Friend reset saved and verified; starting Buddy Setup.");
   return true;
 }
 

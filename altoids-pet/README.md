@@ -104,7 +104,7 @@ cp firmware/altoids_pet/config.example.h firmware/altoids_pet/config.h
 Edit only `config.h` with Wi-Fi credentials, latitude/longitude, and desired
 existing settings. It is gitignored. Never copy real credentials into tracked
 files. Defaults retain Central time with DST (`CST6CDT,M3.2.0/2,M11.1.0/2`),
-07:00–22:00 awake hours, 30-second inactivity sleep, a three-hour weather-cache
+an always-awake companion, 30-second device inactivity sleep, a three-hour weather-cache
 threshold, and 250 ms home animation frames.
 
 Open `firmware/altoids_pet/altoids_pet.ino`, select the board and USB port, Verify,
@@ -170,7 +170,7 @@ altoids-pet/
 - `hardware`: exact TFT wiring, dimensions, rotation, and SPI speed.
 - `palette`: five stable fur palette IDs, pixel-role RGB565 tables, and gear tints.
 - `buddy_setup`: first-run welcome/preview/confirmation, without new care mechanics.
-- `pet`: temporary visual moods, B reaction, sleep schedule, and non-blocking
+- `pet`: temporary visual moods, B reaction and non-blocking
   idle/weather animation state machines. No permanent care/progression stats.
 - `sprites`: native role-map/bitmap composition; `kitsune_assets.cpp` holds the kitsune frames.
 - `gear_sprites`: independent PROGMEM cosmetic foreground/mask bitmaps.
@@ -1837,8 +1837,10 @@ PROGMEM scene palettes use 156 bytes. No second framebuffer is added. See
 Composition order is sky → environment → moon/stars → clouds → background
 particles/lightning → buddy and its existing gear layers → foreground → foreground
 particles → HOME text/status. Odd/even particles share the two depth planes
-without increasing their counts or changing their coordinates/timing. Hearts
-remain with the buddy. Text and icons retain their current coordinates. HOME text draws transparently
+without increasing their counts or changing their coordinates/timing. B-interaction artwork comes from the authored reaction frame, without a
+legacy geometric heart overlay. HOME retains the larger upper-right weather-icon moon and omits the smaller
+duplicate scene moon. Moon masks leave unlit pixels transparent on all screens. Other text and
+icons retain their current coordinates. HOME text draws transparently
 over the scenery, without backing rectangles. Other screens retain their appearance.
 One completed RAM composition is passed to the existing changed-tile transport;
 no intermediate blank frame is sent. Palette selection does not alter weather,
@@ -1878,7 +1880,49 @@ If `kitsune_sleep.png` or `kitsune_sleepy.png` is absent, the renderer reuses th
 available authored BLINK frame; if `kitsune_look_up.png` is absent, it reuses IDLE.
 Other missing buddy expressions likewise reuse IDLE (including BLINK if its PNG
 is missing). This supersedes the earlier legacy-buddy fallback described above.
-The existing state machine, sleep schedule, motion, palettes and gear anchors
+The existing animation timing, motion, palettes and gear anchors
 remain unchanged. No source PNG or substitute artwork is generated. Add the
 missing 48×48 semantic PNG and run `python3 tools/convert_sprites.py` to activate
 its dedicated frame. Missing gear PNG fallback behavior remains unchanged.
+
+## Reset Friend
+
+Open **SETTINGS → RESET FRIEND** to start a new buddy. The confirmation defaults
+to **KEEP FRIEND**: A switches choices, B selects, and C cancels. Select RESET
+FRIEND and press B to confirm. This clears journal/field notes, records, weather
+and severe discoveries, achievements, collected/equipped gear and variants,
+visited-site progress, fur selection, and the old creation date. It immediately
+opens the existing welcome/fur-color setup flow.
+
+Configured field locations (including the active location), units, and sound
+preference are retained; visited flags are cleared. Wi-Fi credentials, weather
+cache, clock, hardware configuration, and timer are unaffected. No observation
+is created by resetting. The new creation date uses the current valid clock,
+or is captured later if time is unavailable.
+
+Reset commits and verifies one normal NVS checkpoint before replacing runtime
+state. Failed writes preserve the current friend and show SAVE FAILED; retry B
+or cancel C. Protected/unavailable saves cannot be reset. No save-version change
+or NVS namespace erase is involved. Rebooting before fur confirmation resumes
+setup; completing setup saves the newly selected palette normally.
+
+Device checks: opening/canceling or choosing KEEP must retain progress; a
+confirmed reset should show welcome and fur selection, then empty progress and
+no equipped gear. Verify retained locations/units/sound, and power-cycle both
+before and after fur confirmation to check setup persistence.
+
+
+## Always-awake companion
+
+The buddy no longer goes to sleep at night. Whenever the device is running,
+blinking, idle/weather reactions, B interactions, focus activity and completion
+celebrations are available at any hour. Interaction moods also remain active
+across the former 10 PM bedtime. The sun/moon, night scenery and sunrise/sunset
+still use the existing real day/night calculations. Legacy `PET_WAKE_HOUR` and
+`PET_SLEEP_HOUR` constants in an existing private config are ignored.
+
+Device power behavior is unchanged: the same 30-second inactivity deep sleep,
+B-button wake and active-timer sleep exemption remain. Waking the device at
+night shows an awake companion. Existing awake sound/notification rules apply
+at night as well; SOUND OFF remains available in Settings. No saved progress or
+sprite assets are changed by this behavior update.

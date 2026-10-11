@@ -1,4 +1,5 @@
 #include "settings_ui.h"
+#include "buddy_setup.h"
 #include "display.h"
 #include "journal.h"
 #include "field_locations.h"
@@ -9,13 +10,14 @@
 #include <string.h>
 
 namespace settings_detail {
-enum class Page : uint8_t { LIST, SOUND, UNITS, LOCATION, EXPORT, IMPORT, ABOUT };
+enum class Page : uint8_t { LIST, SOUND, UNITS, LOCATION, EXPORT, IMPORT, ABOUT, RESET };
 Page settingsPage = Page::LIST;
 uint8_t selection = 0, locationSelection = 0;
 bool draft = false, settingsSaveFailed = false;
 uint32_t settingsChecksum = 0;
 BuddyTransferStatus displayedTransfer = BuddyTransferStatus::NONE;
-const char *items[] = {"SOUND", "UNITS", "LOCATION", "EXPORT BUDDY", "IMPORT BUDDY", "ABOUT"};
+const char *items[] = {"SOUND", "UNITS", "LOCATION", "EXPORT BUDDY", "IMPORT BUDDY", "ABOUT", "RESET FRIEND"};
+constexpr uint8_t SETTINGS_ITEM_COUNT = sizeof(items) / sizeof(items[0]);
 
 void text(int y, const char *value, uint8_t size = 2) {
   while (size > 1 && strlen(value) * 6 * size > TFT_WIDTH - 12) --size;
@@ -28,8 +30,9 @@ void draw() {
   BuddyTransferStatus transfer = buddyTransferStatus();
   if (settingsPage == Page::LIST) {
     text(12, "SETTINGS", 3);
-    for (uint8_t i = 0; i < 6; ++i) {
-      int y = 53 + i * 26;
+    uint8_t first = selection < 6 ? 0 : selection - 5;
+    for (uint8_t i = first; i < first + 6 && i < SETTINGS_ITEM_COUNT; ++i) {
+      int y = 53 + (i - first) * 26;
       if (i == selection) display.drawRect(12, y - 5, 216, 25, COLOR_COOL);
       text(y, items[i]);
     }
@@ -82,6 +85,19 @@ void draw() {
       text(195, "SERIAL: 115200 + ENTER", 1);
       text(217, "C:BACK", 1);
     }
+  } else if (settingsPage == Page::RESET) {
+    text(12, "RESET FRIEND", 2);
+    if (!journalAvailable()) {
+      text(80, "STORAGE PROTECTED"); text(110, "RESET UNAVAILABLE"); text(220, "C:BACK", 1);
+    } else {
+      text(48, "START OVER?", 2);
+      text(80, "Journal, records, gear", 1); text(96, "and progress are erased.", 1);
+      text(112, "Locations/settings kept.", 1);
+      display.drawRect(20, draft ? 165 : 129, 200, 28, COLOR_COOL);
+      text(136, "KEEP FRIEND"); text(172, "RESET FRIEND");
+      if (settingsSaveFailed) text(199, "SAVE FAILED", 1);
+      text(222, "A:CHANGE B:CHOOSE C:BACK", 1);
+    }
   } else {
     text(12, "ABOUT", 3); text(56, "FAIRWEATHER FRIEND");
     char row[32]; snprintf(row, sizeof(row), "FIRMWARE %s", FW_VERSION); text(88, row);
@@ -113,7 +129,7 @@ bool handleSettingsButtons(bool a, bool b, bool c) {
     return true;
   }
   if (a) {
-    if (settingsPage == Page::LIST) { selection = (selection + 1) % 6; draw(); }
+    if (settingsPage == Page::LIST) { selection = (selection + 1) % SETTINGS_ITEM_COUNT; draw(); }
     else if (settingsPage == Page::LOCATION) {
       for (uint8_t step = 1; step <= FIELD_LOCATION_COUNT; ++step) {
         uint8_t id = (locationSelection + step) % FIELD_LOCATION_COUNT;
@@ -121,18 +137,24 @@ bool handleSettingsButtons(bool a, bool b, bool c) {
       }
       settingsSaveFailed = false; draw();
     }
-    else if (settingsPage == Page::SOUND || settingsPage == Page::UNITS) { draft = !draft; settingsSaveFailed = false; draw(); }
+    else if (settingsPage == Page::SOUND || settingsPage == Page::UNITS || settingsPage == Page::RESET) { draft = !draft; settingsSaveFailed = false; draw(); }
   }
   if (b) {
     if (settingsPage == Page::LIST) {
       settingsPage = static_cast<Page>(selection + 1); settingsSaveFailed = false;
       locationSelection = getBuddySave().activeLocation;
       draft = settingsPage == Page::SOUND ? !getBuddySave().soundEnabled : getBuddySave().units == UnitsId::METRIC;
+      if (settingsPage == Page::RESET) draft = false; // KEEP is always the safe default.
       if (settingsPage == Page::EXPORT || settingsPage == Page::IMPORT) beginBuddyTransfer(settingsPage == Page::IMPORT);
       draw();
     } else if (settingsPage == Page::SOUND || settingsPage == Page::UNITS) {
       bool saved = settingsPage == Page::SOUND ? saveBuddySound(!draft) : saveBuddyUnits(draft ? UnitsId::METRIC : UnitsId::US);
       if (saved) { if (!getBuddySave().soundEnabled) stopSound(); back(); }
+      else { settingsSaveFailed = true; draw(); }
+    } else if (settingsPage == Page::RESET) {
+      if (!journalAvailable()) return true;
+      if (!draft) back();
+      else if (resetBuddy()) { stopSound(); beginBuddySetup(); }
       else { settingsSaveFailed = true; draw(); }
     } else if (settingsPage == Page::LOCATION) {
       settingsSaveFailed = !activateFieldLocation(locationSelection); draw();

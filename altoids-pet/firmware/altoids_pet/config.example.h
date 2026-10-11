@@ -20,8 +20,7 @@ const char* const TIMEZONE =
   "CST6CDT,M3.2.0/2,M11.1.0/2";
 
 // Pet routine.
-const int PET_WAKE_HOUR = 7;
-const int PET_SLEEP_HOUR = 22;
+// The pet stays awake whenever the device is running; no pet sleep hours.
 
 // Sleep after 30 seconds without a button press.
 const unsigned long IDLE_SLEEP_MS = 30000;

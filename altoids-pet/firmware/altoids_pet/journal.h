@@ -20,6 +20,8 @@ bool recordWeatherObservation(const WeatherObservation &observation);
 bool equipJournalGear(GearSlot slot, GearId gear);
 bool buddyNeedsSetup();
 bool confirmBuddySetup(FurPaletteId palette);
+// Explicit device confirmation only; preserves owner settings and field sites.
+bool resetBuddy();
 
 // USB Serial foundation; staging never writes. Confirmation commits to NVS
 // before replacing the runtime buddy. Import is the explicit replacement path.

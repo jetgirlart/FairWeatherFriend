@@ -25,6 +25,7 @@ double configuredLatitude(){return 32;}
 double configuredLongitude(){return -95;}
 extern BuddySaveData buddy;
 bool activateFieldLocation(uint8_t id){if(id>=FIELD_LOCATION_COUNT || !buddy.locations[id].used)return false;buddy.activeLocation=id;return true;}
+bool resetBuddy(){buddy=BuddySaveData{};return true;}
 bool saveBuddySound(bool){return true;}
 bool saveBuddyUnits(UnitsId){return true;}
 BuddyTransferStatus buddyTransferStatus(){return BuddyTransferStatus::NONE;}
@@ -66,6 +67,52 @@ void snapshot(const char *name){
    fwrite(rgb,1,3,out);
  }fclose(out);
 }
+void testTransparentMoonAndAuthoredReaction() {
+  // Every phase must leave patterned scenery intact outside its lit mask.
+  for(int phase=0;phase<8;++phase) {
+    for(int y=0;y<240;++y)for(int x=0;x<240;++x)display.drawPixel(x,y,(x+y)%2?0x1234:0x4321);
+    auto before=std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600);
+    drawMoonPhase(100,100,static_cast<MoonPhase>(phase));
+    int lit=0;
+    for(int y=0;y<240;++y)for(int x=0;x<240;++x) {
+      uint16_t after=display.getBuffer()[y*240+x];
+      if(after!=before[y*240+x]) {
+        assert(after==COLOR_WARM && (x-100)*(x-100)+(y-100)*(y-100)<=49);++lit;
+      }
+    }
+    assert(lit>0);
+    if(phase!=MOON_FULL) assert(display.getBuffer()[100*240+100]==before[100*240+100] || phase==MOON_FIRST_QUARTER);
+  }
+  currentScreen=HOME;currentHour=12;weatherState=WEATHER_CLEAR;animationFrame=2;
+  petReacting=true;drawHome();
+  auto scene=selectHomeScene(weatherState,true,2);
+  for(int y=69;y<99;++y)for(int x=168;x<198;++x)assert(display.getBuffer()[y*240+x]==homeSkyColor(scene));
+  petReacting=false;
+  currentHour=23;currentMoonPhase=MOON_FULL;drawHome();
+  // Keep the larger upper-right weather icon, omit the smaller scene moon.
+  assert(display.getBuffer()[31*240+201]==COLOR_WARM);
+  for(int y=85;y<100;++y)for(int x=194;x<209;++x)
+    assert(display.getBuffer()[y*240+x]==homeSkyColor(selectHomeScene(weatherState,false,2)));
+  currentHour=12;
+}
+void testPetAlwaysAwake() {
+  currentScreen=HOME;
+  for(int hour=0;hour<24;++hour){
+    currentHour=hour;petReacting=false;initializePetState();
+    assert(!isPetSleeping() && getPetState().mood==PetMood::CALM);
+    assert(interactWithPet() && petReacting && getPetState().mood==PetMood::EXCITED);
+    fakeMillis=reactionStart+701;updatePetReaction();updatePetReaction();
+    assert(!petReacting && getPetState().mood==PetMood::HAPPY);
+    fakeMillis=reactionStart+5001;updatePetReaction();assert(getPetState().mood==PetMood::CALM);
+    initializeAnimations();updateBlink();assert(!idlePaused); // Idle/weather scheduler remains active at night.
+  }
+  timeValid=false;assert(!isPetSleeping());timeValid=true;
+  // Crossing the old bedtime does not cancel an active interaction mood.
+  currentHour=21;assert(interactWithPet());currentHour=22;updatePetReaction();
+  assert(petReacting && getPetState().mood==PetMood::EXCITED && !isPetSleeping());
+  fakeMillis=reactionStart+5001;updatePetReaction();updatePetReaction();
+  currentHour=12;initializePetState();initializeAnimations();
+}
 void testHomeBackgrounds() {
   // Every existing state maps independently for day/night; lightning keeps its cadence.
   for (bool day : {false, true}) {
@@ -99,11 +146,13 @@ void testHomeBackgrounds() {
   }
   auto night = selectHomeScene(WEATHER_CLEAR, false, 2);
   drawHomeEnvironment(night);animationFrame=2;currentMoonPhase=MOON_FULL;
-  drawHomeNightSky(night);drawHomeClouds(night);
-  assert(display.getBuffer()[62*240+24] == COLOR_WARM);
-  assert(display.getBuffer()[92*240+201] == COLOR_WARM);
-  currentMoonPhase=MOON_NEW;drawHomeEnvironment(night);drawHomeNightSky(night);
+  currentHour=23;weatherState=WEATHER_CLEAR;
+  drawHomeNightSky(night);drawHomeClouds(night);iconAt(201,28);
+  assert(display.getBuffer()[62*240+24] == COLOR_DETAIL);
+  assert(display.getBuffer()[31*240+201] == COLOR_WARM);
   assert(display.getBuffer()[92*240+201] == homeSkyColor(night));
+  currentMoonPhase=MOON_NEW;drawHomeEnvironment(night);drawHomeNightSky(night);iconAt(201,28);
+  assert(display.getBuffer()[31*240+201] == homeSkyColor(night));
   currentMoonPhase=MOON_FULL;
   // All source alpha/roles retain their exact coordinates at native resolution.
   auto scene = selectHomeScene(WEATHER_CLEAR, true, 2);
@@ -152,6 +201,8 @@ int main(){
  currentScreen=HOME;queuedEvent=FieldEventId::SEVERE_THUNDERSTORM_WARNING;
  drawHome();snapshot("field-event");assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));
  fakeMillis+=2500;drawHome();
+ testTransparentMoonAndAuthoredReaction();
+ testPetAlwaysAwake();
  testHomeBackgrounds();
  for(int i=0;i<8;i++){buddy.locations[i].used=true;strcpy(buddy.locations[i].name,"123456789012345");}
  buddy.activeLocation=0;buddy.latestLocation=0;buddy.highestTemperatureLocation=0;buddy.lowestTemperatureLocation=1;
@@ -183,8 +234,15 @@ int main(){
  currentScreen=MENU;drawMenu();snapshot("menu");
  for(auto duration:{5,10,15,25})drawTimerSetup(duration);snapshot("timer");
  currentHour=12;currentScreen=FOCUS_SCREEN;drawFocusTimer(1499);snapshot("focus");
+ auto focusFrame=std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600);
+ display.clearDisplay();petAt(72,88,false,false);
+ // Below the countdown, focus composition is exactly the sprite + equipped gear.
+ // No old yellow outline or background fill is drawn over the authored book.
+ for(int y=100;y<240;++y)for(int x=0;x<240;++x)
+   assert(focusFrame[y*240+x]==display.getBuffer()[y*240+x]);
+ drawFocusTimer(1499);
  currentScreen=TIMER_DONE;drawTimerDone(0);snapshot("done");
- for(int item=0;item<6;item++) {
+ for(int item=0;item<7;item++) {
    openSettings();for(int step=0;step<item;step++)handleSettingsButtons(true,false,false);
    char name[24];snprintf(name,sizeof(name),"settings-list-%d",item);snapshot(name);
    handleSettingsButtons(false,true,false);snprintf(name,sizeof(name),"settings-page-%d",item);snapshot(name);
@@ -248,5 +306,5 @@ int main(){
  fakeMillis++;updateBuddySetup();assert(currentScreen==HOME && !beginBuddySetup());
  // Importing a completed buddy during unfinished setup returns home without another save.
  buddy.setupComplete=false;assert(beginBuddySetup());buddy.setupComplete=true;updateBuddySetup();assert(currentScreen==HOME);
- puts("PASS: physical TFT compositing, all day/night PNG scenes, moon/stars, exact cloud roles/positions, foreground/UI order, nonblack lightning, combined gear, idle poses, sleep, minute-only partial updates, menus/timer/journal/records/gear layouts; previews saved in /tmp/fwf-tft-*.ppm.");
+ puts("PASS: physical TFT compositing, all day/night PNG scenes, moon/stars, exact cloud roles/positions, foreground/UI order, nonblack lightning, combined gear, idle poses, awake pet at all hours, minute-only partial updates, menus/timer/journal/records/gear layouts; previews saved in /tmp/fwf-tft-*.ppm.");
 }
