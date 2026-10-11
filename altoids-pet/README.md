@@ -1835,7 +1835,7 @@ PROGMEM scene palettes use 156 bytes. No second framebuffer is added. See
 | Fog | None | Muted day/night, existing fog particles |
 
 Composition order is sky → environment → moon/stars → clouds → background
-particles/lightning → buddy and its existing gear layers → foreground → foreground
+particles/lightning → foreground/ground → buddy and its existing gear layers → foreground
 particles → HOME text/status. Odd/even particles share the two depth planes
 without increasing their counts or changing their coordinates/timing. B-interaction artwork comes from the authored reaction frame, without a
 legacy geometric heart overlay. HOME retains the larger upper-right weather-icon moon and omits the smaller
@@ -1848,9 +1848,9 @@ clock, saves or any animation state machine.
 
 Background palettes are independent of fur/gear palettes: environment PRIMARY is
 sky, cloud roles select cloud shades, and foreground DETAIL selects grass. No
-art is duplicated per palette. The supplied foreground begins near y=211, below
-the existing buddy feet; its alignment is intentionally preserved rather than
-moving the artwork or buddy to force an overlap.
+art is duplicated per palette. Foreground coverage follows the current source PNG exactly. The buddy and all
+equipped gear draw on top of that ground layer, without shifting either the
+artwork or buddy.
 
 After manually uploading a tested build, check on the physical ST7789:
 
@@ -1868,7 +1868,7 @@ After manually uploading a tested build, check on the physical ST7789:
    Check for flashing, slowed controls, stale tiles or altered unrelated screens.
 
 Host tests cover source integrity, strict conversion, scene choices, moon/stars,
-cloud selection, foreground occlusion/UI precedence and lightning composition.
+cloud selection, ground behind buddy/gear, transparent UI precedence and lightning composition.
 Weather cases on hardware require actual available conditions; this feature does
 not add a debug menu or fake weather observations.
 
@@ -1926,3 +1926,23 @@ B-button wake and active-timer sleep exemption remain. Waking the device at
 night shows an awake companion. Existing awake sound/notification rules apply
 at night as well; SOUND OFF remains available in Settings. No saved progress or
 sprite assets are changed by this behavior update.
+
+
+## Runtime palette contrast
+
+Fur palettes keep their stable ORANGE/CREAM/GRAY/BROWN/BLUE save IDs, with stronger
+warm/cool separation and light accents. Outline remains black and DETAIL remains
+white. Original gear colors are deliberately distinct: field-green cap,
+charcoal-violet glasses, plum umbrella, gold raincoat, burnt-red scarf, navy winter
+coat, and brown boots. Other variant IDs, unlocks and names are unchanged.
+
+Day sky/cloud/ground palettes have stronger blue/neutral/green separation, with
+cool snow and darker rain treatments. HOME clock text selects light/dark ink from
+the sky palette; temperature, location, weather label and divider select ink from
+the ground palette. All text remains transparent. Other screens keep their UI
+colors. These changes affect runtime colors only, not source PNGs or saved data.
+
+On hardware, compare clear/cloudy/rain/night readability, preview all five fur
+palettes, and check original gear colors individually. Confirm that the golden
+raincoat and orange fur read as warm colors, and the location/weather text remain
+legible against grass. The SPI driver, pins and pixel transfer path are unchanged.

@@ -10,19 +10,19 @@ struct SceneColors { uint16_t sky, grass, outline, cloudLow, cloudMid, cloudHigh
 // Background roles share source encoding with sprites, but have independent
 // scene/material palettes. Foreground DETAIL is grass; cloud DETAIL is highlight.
 const SceneColors sceneColors[] PROGMEM = {
-  {rgb(122,184,200),rgb(74,117,60),0,rgb(133,157,165),rgb(193,210,207),rgb(239,238,222)},
+  {rgb(104,170,224),rgb(77,118,43),0,rgb(118,139,171),rgb(197,214,235),rgb(247,244,231)},
   {rgb(25,37,62),rgb(35,64,48),0,rgb(43,57,77),rgb(72,85,105),rgb(105,119,136)},
-  {rgb(134,154,157),rgb(69,99,62),0,rgb(114,133,140),rgb(162,180,180),rgb(205,213,204)},
-  {rgb(32,43,57),rgb(31,52,43),0,rgb(42,53,68),rgb(68,81,96),rgb(100,115,126)},
-  {rgb(89,123,141),rgb(49,88,66),0,rgb(68,91,110),rgb(112,137,152),rgb(157,178,184)},
-  {rgb(22,35,52),rgb(29,49,43),0,rgb(28,42,59),rgb(54,71,91),rgb(83,102,119)},
-  {rgb(53,66,87),rgb(38,67,48),0,rgb(43,50,66),rgb(77,85,105),rgb(116,126,143)},
-  {rgb(17,25,42),rgb(25,42,35),0,rgb(22,30,45),rgb(44,53,72),rgb(72,86,105)},
-  {rgb(162,183,191),rgb(132,160,151),0,rgb(119,142,157),rgb(179,198,207),rgb(235,240,235)},
-  {rgb(39,55,78),rgb(69,90,91),0,rgb(42,59,83),rgb(79,97,120),rgb(133,151,172)},
+  {rgb(111,158,213),rgb(85,112,46),0,rgb(59,65,81),rgb(205,207,210),rgb(251,248,235)},
+  {rgb(32,43,57),rgb(31,52,43),0,rgb(87,85,98),rgb(147,145,154),rgb(207,206,219)},
+  {rgb(73,105,147),rgb(65,99,40),0,rgb(32,38,49),rgb(175,182,185),rgb(236,234,220)},
+  {rgb(22,35,52),rgb(29,49,43),0,rgb(69,66,83),rgb(132,128,145),rgb(191,186,204)},
+  {rgb(53,66,87),rgb(38,67,48),0,rgb(12,17,27),rgb(143,145,153),rgb(210,211,219)},
+  {rgb(17,25,42),rgb(25,42,35),0,rgb(64,58,77),rgb(114,108,126),rgb(174,169,190)},
+  {rgb(163,188,218),rgb(170,192,195),0,rgb(89,101,120),rgb(215,218,224),rgb(253,253,255)},
+  {rgb(39,55,78),rgb(69,90,91),0,rgb(97,108,124),rgb(174,183,197),rgb(232,239,248)},
   {rgb(158,172,161),rgb(109,128,100),0,rgb(129,146,139),rgb(181,193,180),rgb(215,221,203)},
   {rgb(54,66,69),rgb(47,64,55),0,rgb(51,66,69),rgb(85,100,98),rgb(125,139,129)},
-  {rgb(191,203,223),rgb(111,142,114),0,rgb(144,156,177),rgb(192,204,224),rgb(241,244,255)}
+  {rgb(191,203,223),rgb(111,142,114),0,rgb(90,93,112),rgb(153,155,166),rgb(248,248,255)}
 };
 SceneColors homeColors(const HomeScene &scene) {
   const auto &c = sceneColors[uint8_t(scene.palette)];
@@ -91,3 +91,16 @@ void drawHomeForeground(const HomeScene &scene) {
   const uint16_t palette[] = {0, c.outline, c.grass, c.cloudMid, c.grass};
   layer(BACKGROUND_FOREGROUND, palette);
 }
+
+namespace {
+uint16_t readableHomeInk(uint16_t background) {
+  // A deliberately small retro text palette; no filled backing rectangles.
+  unsigned red=((background >> 11) & 31)*255/31;
+  unsigned green=((background >> 5) & 63)*255/63;
+  unsigned blue=(background & 31)*255/31;
+  unsigned brightness=(red*299+green*587+blue*114)/1000;
+  return brightness >= 145 ? rgb(23,29,44) : COLOR_DETAIL;
+}
+}
+uint16_t homeSkyInkColor(const HomeScene &scene) { return readableHomeInk(homeColors(scene).sky); }
+uint16_t homeGroundInkColor(const HomeScene &scene) { return readableHomeInk(homeColors(scene).grass); }

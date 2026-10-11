@@ -132,6 +132,15 @@ void testHomeBackgrounds() {
             : weather == WEATHER_CLOUDY ? (day ? HomePalette::OVERCAST_DAY : HomePalette::OVERCAST_NIGHT)
             : day ? HomePalette::CLEAR_DAY : HomePalette::CLEAR_NIGHT;
       assert(scene.palette == expected && !scene.lightning);
+      auto luma=[](uint16_t c){return int((((c>>11)&31)*255/31)*299+(((c>>5)&63)*255/63)*587+((c&31)*255/31)*114)/1000;};
+      auto c=homeColors(scene);
+      assert(abs(luma(c.sky)-luma(homeSkyInkColor(scene)))>=100);
+      assert(abs(luma(c.grass)-luma(homeGroundInkColor(scene)))>=100);
+      if(scene.clouds==HomeCloudLayer::HEAVY || scene.clouds==HomeCloudLayer::STORM) {
+        for(auto cloud:{c.cloudLow,c.cloudMid,c.cloudHigh})assert(abs(luma(cloud)-luma(c.sky))>=24);
+        assert(luma(c.cloudMid)-luma(c.cloudLow)>=28);
+        assert(luma(c.cloudHigh)-luma(c.cloudMid)>=28);
+      }
     }
   }
   // Cloud pixels use the corresponding authored asset without moving margins.
@@ -166,20 +175,28 @@ void testHomeBackgrounds() {
     else {sawForeground=true;assert(display.getBuffer()[i]!=0xF81F);}
   }
   assert(sawForeground && sawTransparent);
-  // Synthetic buddy+gear reach grass solely to prove occlusion, without moving them in HOME.
-  display.fillRect(0,210,240,30,0xFFFF);display.fillRect(0,215,240,10,0xF800);
-  drawHomeForeground(scene);assert(display.getBuffer()[239*240+120]==homeColors(scene).grass);
+  // The real HOME layer order must keep the lower body above opaque grass.
+  weatherState=WEATHER_CLEAR;currentHour=12;petReacting=false;drawHome();
+  auto home=std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600);
+  drawHomeEnvironment(scene);drawHomeForeground(scene);
+  auto ground=std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600);
+  petAt(72,56,false,blinking);int visibleLowerBody=0;
+  for(int y=140;y<176;++y)for(int x=72;x<168;++x){
+    int i=y*240+x;assert(home[i]==display.getBuffer()[i]);
+    if(home[i]!=ground[i])++visibleLowerBody;
+  }
+  assert(visibleLowerBody>0);
   // Transparent clock glyphs leave the composed scenery intact between pixels.
   drawHomeEnvironment(scene);
   auto beforeText=std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600);
   drawTime();int textPixels=0,untouched=0;
   for(int i=0;i<57600;++i){
     if(display.getBuffer()[i]!=beforeText[i]){
-      assert(display.getBuffer()[i]==COLOR_TEXT);++textPixels;
+      assert(display.getBuffer()[i]==homeSkyInkColor(selectHomeScene(weatherState,isDaylight(),animationFrame)));++textPixels;
     } else if(i/240>=8 && i/240<58 && i%240>=8 && i%240<146) ++untouched;
   }
   assert(textPixels>0 && untouched>0);
-  // Full HOME must use this same final foreground placement and never show black intermediate frames.
+  // Full HOME must keep ground behind the pet and never show black intermediate frames.
   weatherState=WEATHER_STORM;currentHour=12;animationFrame=2;drawHome();
   auto dark=panel;int oldWindows=windows;
   animationFrame=0;drawHome();assert(windows>oldWindows);
@@ -209,7 +226,7 @@ int main(){
  buddy.unlockedGear=0x7f;initializeGearVariants(buddy);
  const GearId gear[]={GearId::FIELD_CAP,GearId::SUNGLASSES,GearId::WINTER_SCARF,GearId::RAINCOAT,GearId::BOOTS,GearId::UMBRELLA};
  for(int i=0;i<6;i++)buddy.equippedSlots[i]=gear[i];
- for(int i=0;i<=8;++i){weatherState=static_cast<WeatherState>(i);currentScreen=HOME;drawHome();assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));}
+ for(int i=0;i<=8;++i){weatherState=static_cast<WeatherState>(i);currentScreen=HOME;drawHome();assert(panel==std::vector<uint16_t>(display.getBuffer(),display.getBuffer()+57600));if(weatherState==WEATHER_CLOUDY)snapshot("cloudy");}
  // Active field label changes only the temperature/location strip, with one update.
  weatherState=WEATHER_RAIN;
  strcpy(buddy.locations[0].name,"CHICAGO, IL");
@@ -306,5 +323,5 @@ int main(){
  fakeMillis++;updateBuddySetup();assert(currentScreen==HOME && !beginBuddySetup());
  // Importing a completed buddy during unfinished setup returns home without another save.
  buddy.setupComplete=false;assert(beginBuddySetup());buddy.setupComplete=true;updateBuddySetup();assert(currentScreen==HOME);
- puts("PASS: physical TFT compositing, all day/night PNG scenes, moon/stars, exact cloud roles/positions, foreground/UI order, nonblack lightning, combined gear, idle poses, awake pet at all hours, minute-only partial updates, menus/timer/journal/records/gear layouts; previews saved in /tmp/fwf-tft-*.ppm.");
+ puts("PASS: physical TFT compositing, all day/night PNG scenes, moon/stars, exact cloud roles/positions, ground behind buddy/gear, transparent UI, nonblack lightning, combined gear, idle poses, awake pet at all hours, minute-only partial updates, menus/timer/journal/records/gear layouts; previews saved in /tmp/fwf-tft-*.ppm.");
 }

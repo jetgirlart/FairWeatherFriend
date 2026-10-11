@@ -419,7 +419,7 @@ void iconAt(int x, int y) {
 }
 }
 void drawTime() {
-  display.setTextColor(COLOR_TEXT);
+  display.setTextColor(homeSkyInkColor(selectHomeScene(weatherState, isDaylight(), animationFrame)));
   display.setTextSize(3);
   display.setCursor(12, 12);
   if (!timeValid) { display.print("NO TIME"); return; }
@@ -435,15 +435,16 @@ void drawHome() {
   drawHomeNightSky(scene);
   drawHomeClouds(scene);
   drawWeatherParticles(false);
+  drawHomeForeground(scene); // Ground sits behind the buddy and equipped gear.
   bool sleeping = isPetSleeping();
   int y = petReacting && !sleeping ? 47 : 56;
   petAt(72, y, sleeping, blinking);
-  drawHomeForeground(scene);
   drawWeatherParticles(true);
   // Single-argument setTextColor draws glyphs transparently over the scene.
   drawTime();
   iconAt(201, 28); // Keep the larger weather-icon moon; no separate scene moon.
-  display.drawFastHLine(26, 182, 180, COLOR_MUTED);
+  const uint16_t ink = homeGroundInkColor(scene);
+  display.drawFastHLine(26, 182, 180, ink);
   const auto &buddy = getBuddySave();
   const char *location = locationExists(buddy, buddy.activeLocation)
                            ? fieldLocationName(buddy, buddy.activeLocation) : "DEFAULT";
@@ -452,14 +453,14 @@ void drawHome() {
     int temperatureWidth = strlen(text) * 12;
     int locationWidth = strlen(location) * 6;
     int x = (TFT_WIDTH - temperatureWidth - 12 - locationWidth) / 2;
-    display.setTextColor(COLOR_TEXT); display.setTextSize(2);
+    display.setTextColor(ink); display.setTextSize(2);
     display.setCursor(x, 188); display.print(text);
-    display.setTextColor(COLOR_MUTED); display.setTextSize(1);
+    display.setTextColor(ink); display.setTextSize(1);
     display.setCursor(x + temperatureWidth + 12, 192); display.print(location);
   } else {
-    display.setTextColor(COLOR_MUTED); centeredText(188, location, 1);
+    display.setTextColor(ink); centeredText(188, location, 1);
   }
-  display.setTextColor(COLOR_COOL);
+  display.setTextColor(ink);
   centeredText(216, weatherValid ? weatherName() : "HELLO", 2);
   display.display();
 }

@@ -17,6 +17,8 @@ struct HomeScene {
 };
 HomeScene selectHomeScene(WeatherState weather, bool daylight, unsigned frame);
 uint16_t homeSkyColor(const HomeScene &scene);
+uint16_t homeSkyInkColor(const HomeScene &scene);
+uint16_t homeGroundInkColor(const HomeScene &scene);
 void drawHomeEnvironment(const HomeScene &scene);
 void drawHomeClouds(const HomeScene &scene);
 void drawHomeForeground(const HomeScene &scene);
