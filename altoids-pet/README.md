@@ -1,18 +1,18 @@
 # FairWeather Friend
 
 FairWeather Friend is a pocket-sized virtual field-research buddy that logs
-weather observations when you open it. The friendly kitsune is a self-sufficient
-little meteorologist is fully grown from the beginning and never evolves. It
-needs no feeding, cleaning, care, or friendship grinding.
-There is no hunger, health, neglect, punishment, or death. Progress comes from
-observing weather, setting lifetime records, discovering weather types, and
-unlocking cosmetic field gear. Missed weather is intentionally missed.
+weather observations when you open it. Your friend is a self-sufficient
+little meteorologist. It
+needs no feeding, cleaning, or care.
+Progress comes from
+observing weather, discovering weather types, and
+unlocking cosmetic field gear.
 
 ## Hardware and wiring
 
 The display target is a **Seeed Studio XIAO ESP32-S3** with a **1.54-inch
-240×240 ST7789 SPI TFT**, three momentary buttons, and the existing optional
-passive piezo. The SH1107/I2C display is replaced; power/charging is unchanged.
+240×240 ST7789 SPI TFT**, three momentary buttons, and a
+ piezo speaker. 
 
 | Connection | XIAO pin | GPIO | Wiring |
 | --- | --- | --- | --- |
