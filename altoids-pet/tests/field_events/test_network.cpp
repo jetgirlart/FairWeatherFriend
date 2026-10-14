@@ -12,12 +12,14 @@ void drawLocationAcquisitionStatus(const char*,unsigned){}
 const char *weatherReply=R"({"current":{"temperature_2m":20,"weather_code":0},"daily":{"sunrise":["2027-01-15T07:00"],"sunset":["2027-01-15T18:00"]}})";
 const char *pointReply=R"({"properties":{"forecastZone":"https://api.weather.gov/zones/forecast/TXZ001"}})";
 const char *alertReply=R"({"features":[{"properties":{"id":"urn:nws:1","event":"Tornado Warning","description":"NOT STORED"}}]})";
-void prepare(){blank();assert(saveBuddyLocation(32,-95));httpUrls.clear();httpHeaders.clear();httpReplies.clear();locationReady=false;}
+void prepare(){blank();assert(saveBuddyLocation(32,-95));httpUrls.clear();httpHeaders.clear();httpReplies.clear();locationReady=false;mockTlsError=0;assert(mockTlsConnections==0);mockPeakTlsConnections=0;Serial.output.clear();}
 #ifndef FWF_GNSS_INTEGRATION_TEST
 int main(){
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};
  assert(fetchWeather() && weatherValid && getBuddySave().totalObservations==1 && getBuddySave().fieldEvents[1].count==1);
+ // A retained weather keep-alive must be closed before opening either NWS TLS session.
+ assert(mockPeakTlsConnections==1 && mockTlsConnections==0);
  assert(httpUrls.size()==3 && httpUrls[2]=="https://api.weather.gov/alerts/active?point=32.000000,-95.000000");
  assert(httpHeaders[2]["User-Agent"]=="FairWeatherFriend/0.10.0 (https://github.com/jetgirlart/FairWeatherFriend)");
  assert(httpHeaders[2]["Accept"]=="application/geo+json");
@@ -37,6 +39,22 @@ int main(){
    if(scenario==5)httpReplies.push_back({200,alertReply,100000});
   }
   assert(fetchWeather() && weatherValid && getBuddySave().totalObservations==1 && getBuddySave().fieldEvents[1].count==0);
+  assert(mockPeakTlsConnections==1 && mockTlsConnections==0);
+ }
+ // Distinct diagnostics for transport, TLS, HTTP, size limit and malformed JSON.
+ for(int scenario=0;scenario<6;++scenario){
+  prepare();httpReplies.push_back({200,weatherReply});
+  const char *expected=nullptr;
+  if(scenario==0){mockTlsError=-123;httpReplies.push_back({-1,""});expected="transport -1 (connection refused)";}
+  if(scenario==1){httpReplies.push_back({-11,""});expected="transport -11 (read Timeout)";}
+  if(scenario==2){httpReplies.push_back({503,""});expected="NWS skipped: HTTP 503";}
+  if(scenario==3){httpReplies.push_back({200,pointReply,100000});expected="response size 100000 exceeds 98304";}
+  if(scenario==4){httpReplies.push_back({200,std::string(98305,' ')+pointReply,-1});expected="98304-byte read limit";}
+  if(scenario==5){httpReplies.push_back({200,"not JSON"});expected="JSON InvalidInput";}
+  assert(fetchWeather() && weatherValid && getBuddySave().totalObservations==1 && getBuddySave().fieldEvents[1].count==0);
+  assert(Serial.output.find(expected)!=std::string::npos);
+  assert(Serial.output.find("https://api.weather.gov/points/32.000000,-95.000000")!=std::string::npos);
+  if(scenario==0)assert(Serial.output.find("TLS/client error -123: mock TLS failure")!=std::string::npos);
  }
  prepare();assert(saveBuddyLocation(51.5,-.1));httpReplies={{200,weatherReply}};
  assert(fetchWeather() && httpUrls.size()==1 && getBuddySave().totalObservations==1);

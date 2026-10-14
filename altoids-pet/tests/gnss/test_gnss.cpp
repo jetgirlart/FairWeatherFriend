@@ -66,6 +66,22 @@ int main(){
  gnssInput=standbyResponse(false);
  updateObservationLocation();assert(standbyNakSeen && !standbyAckSeen);
  fakeMillis=feedbackStarted+GNSS_STANDBY_CHECK_MS;assert(updateObservationLocation());
+ // No ACK plus silence is observational evidence, never a fabricated ACK.
+ prepare();Serial.output.clear();acquire(gga());
+ assert(Serial.output.find("0 RX bytes, 0 GGA sentences in 3 s")!=std::string::npos);
+ assert(Serial.output.find("GNSS output stopped; standby inferred")!=std::string::npos);
+ assert(Serial.output.find("GNSS standby acknowledged")==std::string::npos);
+ // Settling traffic is excluded; continuing data during observation is detected.
+ prepare();gnssInput=gga();beginObservationLocation();fakeMillis=locationStarted+GNSS_WAKE_SETTLE_MS;updateObservationLocation();
+ gnssInput=gga();fakeMillis=feedbackStarted+GNSS_STANDBY_GRACE_MS-1;updateObservationLocation();
+ assert(standbyRxBytes==0 && standbyGgaSentences==0);
+ gnssInput=gga();fakeMillis=feedbackStarted+GNSS_STANDBY_GRACE_MS+1;updateObservationLocation();
+ assert(standbyRxBytes>0 && standbyGgaSentences==1);
+ Serial.output.clear();fakeMillis=feedbackStarted+GNSS_STANDBY_CHECK_MS;assert(updateObservationLocation());
+ assert(Serial.output.find("receiver output continues")!=std::string::npos);
+ assert(Serial.output.find("GNSS output stopped")==std::string::npos);
+ // A missing wire/data stream must not be reported as confirmed standby.
+ prepare();Serial.output.clear();acquire("");assert(Serial.output.find("no pre-command data")!=std::string::npos);
  // Migration from the current shipping version 10 keeps every permanent field.
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};assert(fetchWeather());
  auto old=getBuddySave();std::vector<uint8_t> bytes(RECORD_BYTES);uint8_t *p=bytes.data();

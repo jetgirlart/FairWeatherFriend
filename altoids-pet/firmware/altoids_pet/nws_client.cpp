@@ -20,6 +20,7 @@ public:
     int value = source.read(); if (value >= 0) --remaining; return value;
   }
   int peek() override { return remaining ? source.peek() : -1; }
+  bool limitReached() const { return remaining == 0; }
   void flush() override {}
   size_t write(uint8_t) override { return 0; }
 };
@@ -30,18 +31,40 @@ bool requestNws(const String &url, JsonDocument &result, JsonDocument &filter) {
   http.useHTTP10(true); // Direct stream parsing: avoid HTTP chunk framing.
   http.setConnectTimeout(3000); http.setTimeout(4000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  if (!http.begin(client, url)) return false;
+  if (!http.begin(client, url)) {
+    Serial.printf("NWS skipped: request setup failed (%s).\n", url.c_str());
+    return false;
+  }
   http.addHeader("User-Agent", NWS_USER_AGENT); http.addHeader("Accept", NWS_ACCEPT);
+  unsigned long requestStarted = millis();
   int code = http.GET();
-  if (code != 200 || http.getSize() > MAX_NWS_RESPONSE_BYTES) {
-    Serial.printf("NWS supplemental check skipped: HTTP %d/response size.\n", code); http.end(); return false;
+  if (code != 200) {
+    if (code < 0) {
+      char tlsMessage[160] = {};
+      int tlsError = client.lastError(tlsMessage, sizeof(tlsMessage));
+      Serial.printf("NWS skipped: transport %d (%s), %lu ms (%s).\n", code,
+                    HTTPClient::errorToString(code).c_str(),
+                    static_cast<unsigned long>(millis() - requestStarted), url.c_str());
+      if (tlsError) Serial.printf("NWS TLS/client error %d: %s\n", tlsError, tlsMessage);
+    } else Serial.printf("NWS skipped: HTTP %d (%s).\n", code, url.c_str());
+    http.end(); return false;
+  }
+  if (http.getSize() > MAX_NWS_RESPONSE_BYTES) {
+    Serial.printf("NWS skipped: response size %d exceeds %d bytes (%s).\n",
+                  http.getSize(), MAX_NWS_RESPONSE_BYTES, url.c_str());
+    http.end(); return false;
   }
   // Filter discards descriptions, geometry, instructions, etc. before storage.
   LimitedNwsStream stream(http.getStream());
   auto error = deserializeJson(result, stream, DeserializationOption::Filter(filter),
                                DeserializationOption::NestingLimit(12));
   http.end();
-  if (error || result.overflowed()) { Serial.println("NWS supplemental check skipped: invalid response."); return false; }
+  if (error || result.overflowed()) {
+    if (stream.limitReached()) Serial.printf("NWS skipped: response reached %d-byte read limit (%s).\n", MAX_NWS_RESPONSE_BYTES, url.c_str());
+    else if (result.overflowed()) Serial.printf("NWS skipped: JSON allocation overflow (%s).\n", url.c_str());
+    else Serial.printf("NWS skipped: JSON %s (%s).\n", error.c_str(), url.c_str());
+    return false;
+  }
   return true;
 }
 }

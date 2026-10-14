@@ -332,11 +332,21 @@ bool readSlot(Preferences &prefs, const char *key, BuddySaveData &data,
     return false;
   }
   size_t expected = payloadSize(version);
-  if (length != HEADER_BYTES + expected || payloadLength != expected) return false;
+  if (length != HEADER_BYTES + expected || payloadLength != expected) {
+    Serial.printf("Buddy %s rejected: payload length mismatch.\n", key); return false;
+  }
   uint32_t calculated = hashBytes(bytes + HEADER_BYTES, expected, hashBytes(bytes, 20));
   migrated = version < SAVE_VERSION;
-  return magic == SAVE_MAGIC && slotGeneration > 0 && checksum == calculated &&
-         migrateSupportedSave(version, bytes + HEADER_BYTES, expected, data);
+  if (magic != SAVE_MAGIC || slotGeneration == 0) {
+    Serial.printf("Buddy %s rejected: invalid header/generation.\n", key); return false;
+  }
+  if (checksum != calculated) {
+    Serial.printf("Buddy %s rejected: checksum mismatch.\n", key); return false;
+  }
+  if (!migrateSupportedSave(version, bytes + HEADER_BYTES, expected, data)) {
+    Serial.printf("Buddy %s rejected: invalid payload.\n", key); return false;
+  }
+  return true;
 }
 
 // Exact legacy layout, retained only to recover FIELD RESEARCH BEGAN. Never
@@ -566,14 +576,18 @@ SaveLoadResult loadBuddySave(BuddySaveData &data) {
     return SaveLoadResult::UNAVAILABLE;
   }
   bool found = false, unsupported = false, selectedMigrated = false;
+  const char *selectedKey = nullptr;
   for (const char *key : {"save0", "save1"}) {
     BuddySaveData candidate;
     uint64_t candidateGeneration = 0;
     bool migrated = false;
-    if (readSlot(prefs, key, candidate, candidateGeneration, unsupported, migrated) &&
-        (!found || candidateGeneration > generation)) {
+    if (!readSlot(prefs, key, candidate, candidateGeneration, unsupported, migrated)) continue;
+    if (!found || candidateGeneration > generation) {
       data = candidate; generation = candidateGeneration; found = true; selectedMigrated = migrated;
-    } else if (prefs.isKey(key)) Serial.printf("Buddy %s was not selected (invalid or older).\n", key);
+      selectedKey = key;
+    } else Serial.printf("Buddy %s: valid backup generation %llu; keeping %s generation %llu.\n",
+                         key, static_cast<unsigned long long>(candidateGeneration), selectedKey,
+                         static_cast<unsigned long long>(generation));
   }
   bool hadBuddyKeys = prefs.isKey("save0") || prefs.isKey("save1");
   prefs.end();

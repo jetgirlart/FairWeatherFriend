@@ -17,6 +17,10 @@ unsigned long locationStarted = 0;
 unsigned lastRemaining = 999;
 unsigned long feedbackStarted = 0;
 gnss_ubx::Parser standbyReply;
+gnss_test::Parser standbyNmeaParser;
+unsigned standbyRxBytes = 0, standbyGgaSentences = 0;
+gnss_test::Fix lastAcquisitionFix;
+bool haveAcquisitionFix = false;
 bool receiverAwakeReported = false;
 bool standbyPending = false, standbyAckSeen = false, standbyNakSeen = false;
 void holdGnssTx() {
@@ -25,6 +29,7 @@ void holdGnssTx() {
 }
 void requestGnssStandby() {
   uint8_t packet[24];gnss_ubx::standbyPacket(packet);
+  standbyNmeaParser = gnss_test::Parser{}; standbyRxBytes = standbyGgaSentences = 0;
   standbyReply = gnss_ubx::Parser{};standbyAckSeen = standbyNakSeen = false;
   gnssUart.write(packet,sizeof(packet));gnssUart.flush();
   standbyPending = true;
@@ -32,13 +37,23 @@ void requestGnssStandby() {
 }
 void updateGnssStandby() {
   for(unsigned budget=0;budget<512 && gnssUart.available();++budget) {
-    if(!standbyReply.feed(uint8_t(gnssUart.read())))continue;
+    int byte = gnssUart.read(); if(byte < 0)break;
+    bool observing = millis()-feedbackStarted >= GNSS_STANDBY_GRACE_MS;
+    if(observing)++standbyRxBytes;
+    gnss_test::Fix sample;
+    if(standbyNmeaParser.feed(char(byte),sample) && observing)++standbyGgaSentences;
+    if(!standbyReply.feed(uint8_t(byte)))continue;
     if(standbyReply.cls!=5 || standbyReply.length!=2 || standbyReply.payload[0]!=2 || standbyReply.payload[1]!=0x41)continue;
     if(standbyReply.id==1 && !standbyAckSeen){standbyAckSeen=true;Serial.println("GNSS standby acknowledged");}
     if(standbyReply.id==0 && !standbyNakSeen){standbyNakSeen=true;Serial.println("GNSS standby rejected; module may remain awake");}
   }
   if(millis()-feedbackStarted>=GNSS_STANDBY_CHECK_MS) {
     if(!standbyAckSeen && !standbyNakSeen)Serial.println("GNSS standby requested; no UBX ACK received (power state unverified)");
+    Serial.printf("GNSS standby observation: %u RX bytes, %u GGA sentences in %lu s\n", standbyRxBytes, standbyGgaSentences, GNSS_STANDBY_QUIET_MS/1000);
+    if(standbyNakSeen) Serial.println("GNSS standby not confirmed: command rejected");
+    else if(standbyRxBytes) Serial.println("GNSS standby not confirmed: receiver output continues");
+    else if(receiverAwakeReported) Serial.println("GNSS output stopped; standby inferred (power state not measured)");
+    else Serial.println("GNSS silent, but no pre-command data was observed; standby unverified");
     gnssUart.flush();holdGnssTx();gnssUart.end();standbyPending=false;
   }
 }
@@ -46,7 +61,7 @@ void updateGnssStandby() {
 void beginObservationLocation() {
   selected = {}; locationReady = false; gnssParser = gnss_test::Parser{};
   gpio_hold_dis(static_cast<gpio_num_t>(GNSS_TX_GPIO));
-  standbyPending = false; receiverAwakeReported = false;
+  standbyPending = false; receiverAwakeReported = false; haveAcquisitionFix = false;
   gnssUart.setRxBufferSize(2048);
   gnssUart.begin(GNSS_BAUD, SERIAL_8N1, GNSS_RX_GPIO, GNSS_TX_GPIO);
   Serial.println("Waking GNSS...");
@@ -70,6 +85,7 @@ bool updateObservationLocation() {
     for (unsigned budget = 0; budget < 512 && gnssUart.available(); ++budget) {
       gnss_test::Fix fix;
       bool parsed = gnssParser.feed(char(gnssUart.read()), fix);
+      if(parsed) { lastAcquisitionFix=fix; haveAcquisitionFix=true; }
       if(parsed && !receiverAwakeReported) { receiverAwakeReported = true; Serial.println("GNSS awake"); }
       if (parsed && fix.acceptable(GNSS_MIN_SATELLITES, GNSS_MAX_HDOP) && millis() - locationStarted < GNSS_TIMEOUT_MS) {
         selected = {fix.latitude, fix.longitude, GNSS_LOCATION, LOCATION_SOURCE_GNSS};
@@ -82,6 +98,11 @@ bool updateObservationLocation() {
   }
   locationReady = true; feedbackStarted = millis(); selected = savedObservationLocation(getBuddySave());
   Serial.println("GNSS FIX FAILED");
+  if(haveAcquisitionFix) {
+    Serial.printf("Last GNSS GGA: quality %u, satellites %u, HDOP ",lastAcquisitionFix.quality,lastAcquisitionFix.satellites);
+    if(lastAcquisitionFix.hdopAvailable)Serial.printf("%.2f\n",lastAcquisitionFix.hdop);
+    else Serial.println("unavailable");
+  } else Serial.println("GNSS: no checksum-valid GGA received in acquisition window");
   if (selected.source != LOCATION_SOURCE_NONE) {
     const char *name = fieldLocationName(getBuddySave(), selected.id);
     Serial.printf("Falling back to field site: %s\nLocation source: FIELD SITE (%s)\n", name, name);

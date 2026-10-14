@@ -1959,9 +1959,9 @@ Only a due live session calls `beginObservationLocation()`: cold boot always
 tries a live session; B wake uses the existing weather cache/staleness policy.
 A cached wake does not initialize UART or wait for GNSS. The GNSS module steps
 non-blockingly using millis and a fixed sentence buffer. The existing startup
-sync coordinator polls those steps with yield for at most 20 seconds, followed
-by a bounded 1200 ms standby-ACK/result window. The 1500 ms wake-settle
-period is included within the 20-second acquisition limit. As with the existing startup Wi-Fi/NTP path,
+sync coordinator polls those steps with yield for at most 120 seconds, followed
+by a bounded standby check (1-second settling plus a 3-second receive window). The 1500 ms wake-settle
+period is included within the 120-second acquisition limit. As with the existing startup Wi-Fi/NTP path,
 normal HOME controls are available after setup completes; no new background
 acquisition or continuous tracking runs in loop.
 
@@ -2015,8 +2015,8 @@ Before manually uploading to the real board:
    behavior remains intact, and saved Field Sites retain their names/coordinates.
    GNSS observations must not increase FIELD SITES VISITED.
 4. Sleep and B-wake within the cache interval: expect cached weather, Wi-Fi off,
-   preserved GNSS indicator, and **no GNSS: acquiring** message or 20-second wait.
-5. On a due live session without a fix, expect ≤20 seconds plus brief feedback,
+   preserved GNSS indicator, and **no GNSS: acquiring** message or acquisition wait.
+5. On a due live session without a fix, expect ≤120 seconds plus brief feedback,
    USING SAVED SITE, named FIELD SITE diagnostics, pin icon, and normal weather
    collected at that site's coordinates. A module missing/no-data case must work.
 6. Test no-fix with a saved fallback at 0,0: expect LOCATION NOT SET and ? icon,
@@ -2037,14 +2037,17 @@ sensor reservation has been removed. No other pins or device wake timings change
 
 At the beginning of a due live session, release D5's GPIO hold, open the UART,
 and send 0xFF to provide the configured UART-RX wake edge. Allow 1500 ms for
-startup within the existing 20-second fix timeout. Cached wakes do not release
+startup within the 120-second fix timeout. Cached wakes do not release
 the D5 hold, start UART, or send any wake/standby command.
 
 After a fix is selected or acquisition times out, send the same 16-byte version-0
 UBX-RXM-PMREQ form exercised by the spare test, with backup/force flags 0x06 and
 UART-RX wake source 0x08. The main firmware requests **duration 0** (indefinite
 until wake), rather than the standalone test's 10-second safety timer. It polls
-for a checksum-valid matching ACK/NAK for up to 1200 ms without animation delays.
+for a checksum-valid matching ACK/NAK through a 1-second settling interval and 3-second receive window without
+animation delays. It counts raw RX bytes and checksum-valid GGA sentences,
+reporting continued output, observed silence, or silence without pre-command
+data. These are diagnostic observations, not current measurements.
 A real ACK prints GNSS standby acknowledged; NAK or missing ACK are reported
 explicitly without claiming confirmed sleep or aborting weather collection.
 No persistent receiver configuration or GNSS power GPIO is changed.
@@ -2068,8 +2071,19 @@ Hardware checks after manual upload:
 4. Trigger another live session (cold reboot or stale cache) and verify UART wake
    produces another acceptable fix. If software standby reset volatile baud or
    message settings, log the timeout; saved-site fallback remains available.
-5. Try no-fix acquisition: after 20 seconds it must still request GNSS standby,
+5. Try no-fix acquisition: after 120 seconds it must still request GNSS standby,
    then use a valid saved site or skip weather if no valid fallback exists.
 6. Measure current across GNSS standby and device deep sleep if available; ACK
    or silence alone does not establish current consumption. The M100 stays on
    the 3V3 supply, and hardware standby/receiver configuration remain future work.
+
+
+Standby troubleshooting: after manual upload, RESET with Serial Monitor open and
+capture GNSS FIX result through GNSS standby observation. The report counts only
+the three-second post-settle window and never dumps raw NMEA. Continued output
+indicates standby is not confirmed; zero bytes after observed acquisition data
+suggests output stopped before UART teardown. If the module's known red standby
+LED then starts blinking again during device sleep, report that timing separately
+so GPIO shutdown/hold behavior can be investigated. If no valid fix is acquired,
+the last GGA quality/satellite/HDOP diagnostic explains the acceptance gate.
+Cached wakes still perform no UART work and incur no additional wait.

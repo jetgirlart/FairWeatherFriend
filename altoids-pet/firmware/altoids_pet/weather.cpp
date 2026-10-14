@@ -382,6 +382,9 @@ bool fetchWeather() {
     http.getString();
 
   http.end();
+  // HTTPClient may retain a reusable HTTPS connection after end(). Release
+  // its TLS buffers before parsing/checkpointing and opening the NWS client.
+  client.stop();
 
   JsonDocument doc;
 

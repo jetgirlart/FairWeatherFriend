@@ -264,9 +264,29 @@ int main() {
  auto beforeImport=getBuddySave();assert(!confirmBuddyImport(buddySaveChecksum(saved)));
  assert(buddySaveChecksum(beforeImport)==buddySaveChecksum(getBuddySave()));failWrite=false;
  // Newest damaged slot falls back to previous valid slot.
+ // A valid older/equal backup is informational; loading never writes to NVS.
+ auto slotSnapshot=storage;writes=nvsWrites;
+ BuddySaveData loaded;Serial.output.clear();
+ assert(loadBuddySave(loaded)==SaveLoadResult::LOADED);
+ assert(buddySaveChecksum(loaded)==buddySaveChecksum(getBuddySave()));
+ assert(storage==slotSnapshot && nvsWrites==writes);
+ assert(Serial.output.find("invalid or older")==std::string::npos);
+ if(generation%2)std::swap(storage["fwf-buddy"]["save0"],storage["fwf-buddy"]["save1"]);
+ Serial.output.clear();assert(loadBuddySave(loaded)==SaveLoadResult::LOADED);
+ assert(Serial.output.find("save1: valid backup generation")!=std::string::npos);
+ assert(buddySaveChecksum(loaded)==buddySaveChecksum(getBuddySave()) && nvsWrites==writes);
+ storage=slotSnapshot;
+ // Both slots also remain valid when generation ties: save0 wins as before.
+ auto validBlob=storage["fwf-buddy"][generation%2?"save1":"save0"];
+ storage["fwf-buddy"]["save0"]=validBlob;storage["fwf-buddy"]["save1"]=validBlob;
+ Serial.output.clear();assert(loadBuddySave(loaded)==SaveLoadResult::LOADED);
+ assert(Serial.output.find("save1: valid backup generation")!=std::string::npos);
+ assert(nvsWrites==writes);storage=slotSnapshot;
  auto previous=getBuddySave();observe(2,450);auto newest=getBuddySave();
  const char *latestKey=generation%2?"save1":"save0";storage["fwf-buddy"][latestKey].back()^=1;
+ Serial.output.clear();writes=nvsWrites;
  initializeJournal();assert(buddySaveChecksum(getBuddySave())==buddySaveChecksum(previous));
+ assert(Serial.output.find("checksum mismatch")!=std::string::npos && nvsWrites==writes);
  // Unknown version on either slot locks all writes, including import/equipment.
  storage["fwf-buddy"][latestKey][4]=99;auto protectedStorage=storage;
  initializeJournal();assert(!journalAvailable());
