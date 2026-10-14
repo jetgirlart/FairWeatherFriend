@@ -10,6 +10,7 @@ void checkpointJournal(bool) {}
 void stopSound() {}
 void sleepDisplay() {}
 bool timerActive() {return false;}
+void prepareGnssDeepSleep(){}
 #include "../../firmware/altoids_pet/power.cpp"
 
 void reset() {

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string>
 #include <stdarg.h>
-constexpr int D7=44;
+constexpr int D7=44,D4=5,D5=6;
 constexpr unsigned SERIAL_8N1=0x800001c;
 extern unsigned long fakeClock;
 inline unsigned long millis(){return fakeClock;}

@@ -21,7 +21,7 @@ The display target is a **Seeed Studio XIAO ESP32-S3** with a **1.54-inch
 | Button C | D2 | 3 | Button to GND |
 | Optional passive piezo | D3 | 4 | D3 → 220 Ω → piezo +; piezo − → GND |
 | TFT RES/reset | D4 | 5 | RES; dedicated hardware reset |
-| Future Hall sensor | D5 | 6 | Reserved, unused |
+| M100 GNSS TX | D5 | 6 | Connect to M100 RX; standby/wake commands |
 | TFT DC | D6 | 43 | DC |
 | M100 GNSS RX | D7 | 44 | M100 TX; UART 1, 115200 baud |
 | TFT SCL/clock | D8 | 7 | SCL (SPI SCK) |
@@ -44,7 +44,7 @@ Display pins/dimensions/rotation/SPI speed live in `firmware/altoids_pet/hardwar
 
 The firmware passes `TFT_CS = -1` and `TFT_RST = D4` to the installed Adafruit
 ST7789 driver. D7/GPIO44 receives M100 GNSS TX; D4/GPIO5 remains dedicated TFT
-reset, D5/GPIO6 remains reserved for Hall sensing, and D9/GPIO8 remains the
+reset, D5/GPIO6 transmits GNSS standby/wake commands, and D9/GPIO8 remains the
 held-LOW sleep backlight control.
 
 With USB and battery disconnected, move only the TFT CS wire from D7 to GND.
@@ -781,7 +781,7 @@ XIAO ESP32-S3 build is verified. No upload or hardware test is performed automat
 
 On the physical device:
 
-- Wire the exact SPI map above; leave D5 disconnected/reserved. Check rotation,
+- Wire the exact SPI map above; connect M100 RX to D5 for GNSS standby/wake. Check rotation,
   all four edges, colors, and readability. TFT BLK must be controlled by D9.
 - On cold boot and B wake, verify the first illuminated frame is complete, with
   no white/black flash. Leave idle for 30 seconds: backlight must go fully off,
@@ -1950,17 +1950,18 @@ legible against grass. The SPI driver, pins and pixel transfer path are unchange
 ## GNSS live-observation location (save version 11)
 
 Main-board wiring matches the successful spare-board test: HGLRC M100 Mini VCC
-→ 3V3, GND → GND, TX → D7 (GPIO44), module RX unconnected. Hardware UART 1 uses
-115200 baud with no TX pin. TFT CS remains grounded, RESET remains D4, and all
-other pins are unchanged. The module stays powered from 3V3; ending UART reception
-is not GNSS power-off. No standby commands or IP/geolocation service are used.
+→ 3V3, GND → GND, TX → D7 (GPIO44), RX → D5 (GPIO6). Hardware UART 1 uses
+115200 baud in full duplex. TFT CS remains grounded, RESET remains D4, and all
+other pins are unchanged. The module stays supplied from 3V3, with UBX software standby between live
+sessions. UART shutdown alone is not power-off. No IP/geolocation service is used.
 
 Only a due live session calls `beginObservationLocation()`: cold boot always
 tries a live session; B wake uses the existing weather cache/staleness policy.
 A cached wake does not initialize UART or wait for GNSS. The GNSS module steps
 non-blockingly using millis and a fixed sentence buffer. The existing startup
 sync coordinator polls those steps with yield for at most 20 seconds, followed
-by 600 ms of result feedback. As with the existing startup Wi-Fi/NTP path,
+by a bounded 1200 ms standby-ACK/result window. The 1500 ms wake-settle
+period is included within the 20-second acquisition limit. As with the existing startup Wi-Fi/NTP path,
 normal HOME controls are available after setup completes; no new background
 acquisition or continuous tracking runs in loop.
 
@@ -2006,8 +2007,8 @@ otherwise retain their existing behavior.
 
 Before manually uploading to the real board:
 
-1. Verify the M100 wiring and grounded TFT CS; do not attach M100 RX or repurpose
-   other pins. Confirm saved fallback coordinates are correct and not 0,0.
+1. Verify the M100 wiring and grounded TFT CS; connect M100 RX to D5 and leave display RESET on D4. D5 is no longer
+   reserved for Hall sensing; do not repurpose other pins. Confirm saved fallback coordinates are correct and not 0,0.
 2. Cold boot outdoors: check LOCATION FOUND, GNSS FIX OK, and Location source:
    GNSS. HOME and Latest/Field Note should show GNSS plus the dish icon.
 3. Verify both request locations match the acquired coordinates, all pet/gear/UI
@@ -2024,5 +2025,51 @@ Before manually uploading to the real board:
 7. Verify NVS/cold boot and Export/Import retain GNSS note/record labels. Delete
    and reuse a saved slot: past GNSS records must still say GNSS.
 8. Check existing 30-second inactivity sleep, B wake, focus timer/sound, Journal,
-   Records, gear and fur palettes. GNSS remains powered during device sleep for
-   this integration; power optimization is a separate task.
+   Records, gear and fur palettes. GNSS remains supplied from 3V3 but receives indefinite software standby
+   before the device sleeps. Measure current to verify the actual savings.
+
+
+## GNSS standby and UART wake
+
+D7 is UART RX from M100 TX; D5 is UART TX to M100 RX, both at 115200 baud.
+D4 remains dedicated ST7789 RESET. D5 is now assigned to GNSS, so the former Hall
+sensor reservation has been removed. No other pins or device wake timings change.
+
+At the beginning of a due live session, release D5's GPIO hold, open the UART,
+and send 0xFF to provide the configured UART-RX wake edge. Allow 1500 ms for
+startup within the existing 20-second fix timeout. Cached wakes do not release
+the D5 hold, start UART, or send any wake/standby command.
+
+After a fix is selected or acquisition times out, send the same 16-byte version-0
+UBX-RXM-PMREQ form exercised by the spare test, with backup/force flags 0x06 and
+UART-RX wake source 0x08. The main firmware requests **duration 0** (indefinite
+until wake), rather than the standalone test's 10-second safety timer. It polls
+for a checksum-valid matching ACK/NAK for up to 1200 ms without animation delays.
+A real ACK prints GNSS standby acknowledged; NAK or missing ACK are reported
+explicitly without claiming confirmed sleep or aborting weather collection.
+No persistent receiver configuration or GNSS power GPIO is changed.
+
+Flush the transmit buffer, hold D5's idle-HIGH pad state **before** ending UART,
+and retain that hold through device deep sleep. This prevents teardown/floating
+TX from becoming an unintended UART-RX wake edge. The existing TFT backlight
+hold, B wake setup, 30-second inactivity rule and timer exemption are unchanged.
+No save-version or buddy-data changes are introduced by this power integration.
+
+Hardware checks after manual upload:
+
+1. Check TX → D7 and RX → D5, display RESET → D4, CS → GND. Verify the OLED still
+   initializes normally and B wake works.
+2. Cold boot/live session: expect Waking GNSS, an accepted fix or saved-site
+   fallback, Entering GNSS standby, and the actual ACK/NAK/no-ACK outcome. Both
+   weather/NWS still use the chosen location; icons and progress should agree.
+3. Let the device sleep and B-wake within the cache interval. There must be no
+   GNSS UART/acquisition/wake messages or delay. Wait longer than 10 seconds to
+   check that the receiver does not automatically leave standby like the test did.
+4. Trigger another live session (cold reboot or stale cache) and verify UART wake
+   produces another acceptable fix. If software standby reset volatile baud or
+   message settings, log the timeout; saved-site fallback remains available.
+5. Try no-fix acquisition: after 20 seconds it must still request GNSS standby,
+   then use a valid saved site or skip weather if no valid fallback exists.
+6. Measure current across GNSS standby and device deep sleep if available; ACK
+   or silence alone does not establish current consumption. The M100 stays on
+   the 3V3 supply, and hardware standby/receiver configuration remain future work.

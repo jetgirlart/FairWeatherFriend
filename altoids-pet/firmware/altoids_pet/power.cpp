@@ -1,3 +1,4 @@
+#include "gnss.h"
 #include "power.h"
 #include "config.h"
 #include "display.h"
@@ -101,6 +102,7 @@ void goToSleep() {
   checkpointJournal(true);
 
   stopSound();
+  prepareGnssDeepSleep();
   sleepDisplay();
   Serial.println("Press B to wake.");
   delay(100);
