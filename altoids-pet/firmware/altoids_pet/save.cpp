@@ -140,7 +140,7 @@ uint32_t legacyChecksum(const BuddySaveData &s, GearId gear) {
   return hashBytes(bytes, sizeof(bytes));
 }
 size_t payloadSize(uint32_t version) {
-  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case 7: return V7_PAYLOAD_BYTES; case 8: return V8_PAYLOAD_BYTES; case 9: return V9_PAYLOAD_BYTES; case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
+  switch (version) { case 1: return V1_PAYLOAD_BYTES; case 2: return V2_PAYLOAD_BYTES; case 3: return V3_PAYLOAD_BYTES; case 4: return V4_PAYLOAD_BYTES; case 5: return V5_PAYLOAD_BYTES; case 6: return V6_PAYLOAD_BYTES; case 7: return V7_PAYLOAD_BYTES; case 8: return V8_PAYLOAD_BYTES; case 9: return V9_PAYLOAD_BYTES; case 10: case SAVE_VERSION: return PAYLOAD_BYTES; default: return 0; }
 }
 uint32_t v2Checksum(const BuddySaveData &s) {
   uint8_t bytes[V2_PAYLOAD_BYTES]; BuddySaveData old = s; old.saveVersion = 2;
@@ -186,6 +186,7 @@ uint32_t v9Checksum(const BuddySaveData &s) {
   encodeNotes(s, bytes + V8_PAYLOAD_BYTES); uint8_t *version = bytes; put32(version, 9);
   return hashBytes(bytes, sizeof(bytes));
 }
+uint32_t v10Checksum(const BuddySaveData &s) { BuddySaveData old = s; old.saveVersion = 10; return buddySaveChecksum(old); }
 bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySaveData &s) {
   if (length != payloadSize(version)) return false;
   s = BuddySaveData{}; s.soundEnabled = SOUND_ENABLED;
@@ -246,7 +247,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
       memcpy(location.name, p, LOCATION_NAME_BYTES); p += LOCATION_NAME_BYTES;
       location.latitudeMicrodegrees = int32_t(get32(p)); location.longitudeMicrodegrees = int32_t(get32(p));
     }
-    auto ref = [&p](uint8_t &id) { uint32_t value = get32(p); if (value != 255 && value >= FIELD_LOCATION_COUNT) return false; id = value; return true; };
+    auto ref = [&p, version](uint8_t &id) { uint32_t value = get32(p); if (value != 255 && !(version >= 11 && value == GNSS_LOCATION) && value >= FIELD_LOCATION_COUNT) return false; id = value; return true; };
     if (!ref(s.activeLocation)) return false; s.fieldSitesVisited = get64(p);
     if (!ref(s.latestLocation) || !ref(s.highestTemperatureLocation) || !ref(s.lowestTemperatureLocation)) return false;
     for (auto &record : s.records) if (!ref(record.location)) return false;
@@ -263,7 +264,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
     for (auto &n : s.fieldNotes) {
       n.timestamp = get64(p); n.temperatureMilliC = int32_t(get32(p)); n.weatherCode = int32_t(get32(p));
       uint32_t category = get32(p), location = get32(p);
-      if ((category >= WEATHER_CATEGORY_COUNT && category != 255) || (location >= FIELD_LOCATION_COUNT && location != 255)) return false;
+      if ((category >= WEATHER_CATEGORY_COUNT && category != 255) || (location >= FIELD_LOCATION_COUNT && location != 255 && !(version >= 11 && location == GNSS_LOCATION))) return false;
       n.category = WeatherCategory(category); n.location = location; n.metrics.validMask = get32(p);
       for (auto &value : n.metrics.values) value = int32_t(get32(p));
       n.outcomes = get32(p); n.severeEvents = get32(p);
@@ -281,7 +282,7 @@ bool decodeSupported(uint32_t version, const uint8_t *p, size_t length, BuddySav
 // Unknown versions never fall through to reset.
 bool migrateSupportedSave(uint32_t version, const uint8_t *payload, size_t length, BuddySaveData &data) {
   switch (version) {
-    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
+    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case 10: case SAVE_VERSION: return decodeSupported(version, payload, length, data);
     default: return false;
   }
 }
@@ -428,7 +429,7 @@ bool validateBuddySave(const BuddySaveData &s) {
     if (s.equippedSlots[slot] == GearId::NONE ? s.equippedVariants[slot] != 0 :
         !gearVariantUnlocked(s, s.equippedSlots[slot], s.equippedVariants[slot])) return false;
   }
-  auto validRef = [&s](uint8_t id) { return id == UNKNOWN_LOCATION || (locationExists(s, id) && s.locations[id].visited); };
+  auto validRef = [&s](uint8_t id) { return id == UNKNOWN_LOCATION || id == GNSS_LOCATION || (locationExists(s, id) && s.locations[id].visited); };
   if (s.fieldNoteCount > FIELD_NOTE_COUNT || s.fieldNoteNext >= FIELD_NOTE_COUNT ||
       s.fieldNoteCount > s.totalObservations ||
       (s.fieldNoteCount < FIELD_NOTE_COUNT && s.fieldNoteNext != s.fieldNoteCount)) return false;
@@ -844,7 +845,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       auto &location = s.locations[id]; location.used = true; strcpy(location.name, site["name"]);
       location.latitudeMicrodegrees = site["latitudeMicrodegrees"].as<int32_t>(); location.longitudeMicrodegrees = site["longitudeMicrodegrees"].as<int32_t>(); location.visited = site["visited"].as<bool>();
     }
-    auto ref = [](JsonVariantConst value, uint8_t &id) { if (!value.is<uint32_t>() || (value.as<uint32_t>() != 255 && value.as<uint32_t>() >= FIELD_LOCATION_COUNT)) return false; id = value.as<uint8_t>(); return true; };
+    auto ref = [importedVersion](JsonVariantConst value, uint8_t &id) { if (!value.is<uint32_t>() || (value.as<uint32_t>() != 255 && !(importedVersion >= 11 && value.as<uint32_t>() == GNSS_LOCATION) && value.as<uint32_t>() >= FIELD_LOCATION_COUNT)) return false; id = value.as<uint8_t>(); return true; };
     if (!ref(doc["activeLocation"], s.activeLocation) || !ref(doc["latestLocation"], s.latestLocation) ||
         !ref(doc["highestTemperatureLocation"], s.highestTemperatureLocation) || !ref(doc["lowestTemperatureLocation"], s.lowestTemperatureLocation) || !doc["fieldSitesVisited"].is<uint64_t>()) return false;
     s.fieldSitesVisited = doc["fieldSitesVisited"].as<uint64_t>();
@@ -872,7 +873,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
     for (JsonObjectConst note : notes) {
       if (note.size() != 9 || !note["timestamp"].is<int64_t>() || !note["temperatureMilliC"].is<int32_t>() ||
           !note["weatherCode"].is<int32_t>() || !note["category"].is<uint32_t>() || note["category"].as<uint32_t>() >= WEATHER_CATEGORY_COUNT ||
-          !note["location"].is<uint32_t>() || (note["location"].as<uint32_t>() != 255 && note["location"].as<uint32_t>() >= FIELD_LOCATION_COUNT) ||
+          !note["location"].is<uint32_t>() || (note["location"].as<uint32_t>() != 255 && !(importedVersion >= 11 && note["location"].as<uint32_t>() == GNSS_LOCATION) && note["location"].as<uint32_t>() >= FIELD_LOCATION_COUNT) ||
           !note["validMetrics"].is<uint32_t>() || !note["outcomes"].is<uint32_t>() || !note["severeEvents"].is<uint32_t>()) { error = "Invalid field note"; return false; }
       FieldNote &n = s.fieldNotes[(s.fieldNoteNext + FIELD_NOTE_COUNT - 1 - age++) % FIELD_NOTE_COUNT];
       n.timestamp = note["timestamp"].as<int64_t>(); n.temperatureMilliC = note["temperatureMilliC"].as<int32_t>();
@@ -909,7 +910,7 @@ bool deserializeBuddySave(const char *json, size_t length, BuddySaveData &data, 
       error = "Invalid checksum"; return false;
     }
   }
-  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : importedVersion == 7 ? v7Checksum(s) : importedVersion == 8 ? v8Checksum(s) : importedVersion == 9 ? v9Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
+  if (strtoul(text, nullptr, 16) != (importedVersion == 1 ? legacyChecksum(s, legacyGear) : importedVersion == 2 ? v2Checksum(s) : importedVersion == 3 ? v3Checksum(s) : importedVersion == 4 ? v4Checksum(s) : importedVersion == 5 ? v5Checksum(s) : importedVersion == 6 ? v6Checksum(s) : importedVersion == 7 ? v7Checksum(s) : importedVersion == 8 ? v8Checksum(s) : importedVersion == 9 ? v9Checksum(s) : importedVersion == 10 ? v10Checksum(s) : buddySaveChecksum(s))) { error = "Checksum mismatch"; return false; }
   if (importedVersion < 7) migrateHome(s);
   data = s; error = nullptr; return true;
 }

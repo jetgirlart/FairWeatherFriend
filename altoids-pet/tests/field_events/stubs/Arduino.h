@@ -33,3 +33,5 @@ struct Stream {
 inline void delay(unsigned long ms){fakeMillis+=ms;}
 inline void configTime(long,int,const char*,const char*,const char*){}
 inline bool getLocalTime(struct tm *t,unsigned long){time_t now=time(nullptr);return localtime_r(&now,t);}
+
+inline void yield(){++fakeMillis;}

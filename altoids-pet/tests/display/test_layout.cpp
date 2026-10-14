@@ -5,6 +5,7 @@
 #include "gear.h"
 #include "journal.h"
 #include "display.h"
+ObservationLocation currentWeatherLocation{32,-95,0,LOCATION_SOURCE_FIELD_SITE};
 bool timeValid=true,weatherValid=true,sunTimesValid=true;
 int currentHour=12,currentMinute=34,sunriseHour=7,sunriseMinute=12,sunsetHour=18,sunsetMinute=42;
 int temperatureF=72;
@@ -233,13 +234,17 @@ int main(){
  strcpy(buddy.locations[1].name,"MADISON, WI");
  buddy.activeLocation=0;drawHome();
  std::vector<uint16_t> firstLocation=panel;int locationWindows=windows;
- buddy.activeLocation=1;drawHome();bool locationChanged=false;
+ buddy.activeLocation=1;currentWeatherLocation.id=1;drawHome();bool locationChanged=false;
  for(int i=0;i<57600;i++)if(panel[i]!=firstLocation[i]){
   locationChanged=true;assert(i/240>=188 && i/240<204);
  }
  assert(locationChanged && windows>locationWindows && windows-locationWindows<15);
  locationWindows=windows;drawHome();assert(windows==locationWindows);
- buddy.activeLocation=0;drawHome();snapshot("home");
+ // Tiny source icon and label follow the fetched observation, not active selection.
+ currentWeatherLocation={32.710292,-95.496410,GNSS_LOCATION,LOCATION_SOURCE_GNSS};drawHome();snapshot("gnss-home");
+ currentWeatherLocation={32,-95,0,LOCATION_SOURCE_FIELD_SITE};
+
+ buddy.activeLocation=0;currentWeatherLocation.id=0;drawHome();snapshot("home");
  int previous=windows;drawHome();assert(windows==previous); // Static frame no transfer.
  currentMinute++;drawHome();assert(windows>previous && windows-previous<15);
  for(auto action:{IdleAction::LOOK_LEFT,IdleAction::LOOK_RIGHT,IdleAction::BOUNCE,IdleAction::EAR_TWITCH,IdleAction::UMBRELLA,IdleAction::STORM_CROUCH,IdleAction::SNOW_SHIVER}) {

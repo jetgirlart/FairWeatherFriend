@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "palette.h"
 
-constexpr uint32_t SAVE_VERSION = 10;
+constexpr uint32_t SAVE_VERSION = 11;
 constexpr uint8_t WEATHER_CATEGORY_COUNT = 8;
 
 // Stable save IDs, independent of renderer/weather enums. Append in a new version.
@@ -34,6 +34,7 @@ struct WeatherMetrics {
 constexpr uint8_t FIELD_LOCATION_COUNT = 8;
 constexpr uint8_t LOCATION_NAME_BYTES = 16;
 constexpr uint8_t UNKNOWN_LOCATION = 255;
+constexpr uint8_t GNSS_LOCATION = 254; // Temporary observation, never a saved-site slot.
 struct FieldLocation {
   char name[LOCATION_NAME_BYTES] = {};
   int32_t latitudeMicrodegrees = 0, longitudeMicrodegrees = 0;

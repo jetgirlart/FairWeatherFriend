@@ -1,5 +1,6 @@
 #include "display.h"
 #include "background.h"
+#include "location_icon.h"
 #include "journal_ui.h"
 #include "buddy_setup.h"
 #include "settings_ui.h"
@@ -446,19 +447,22 @@ void drawHome() {
   const uint16_t ink = homeGroundInkColor(scene);
   display.drawFastHLine(26, 182, 180, ink);
   const auto &buddy = getBuddySave();
-  const char *location = locationExists(buddy, buddy.activeLocation)
-                           ? fieldLocationName(buddy, buddy.activeLocation) : "DEFAULT";
+  const uint8_t usedLocation = weatherValid ? currentWeatherLocation.id : UNKNOWN_LOCATION;
+  const LocationSource source = weatherValid ? currentWeatherLocation.source : LOCATION_SOURCE_NONE;
+  const char *location = !weatherValid && savedObservationLocation(buddy).source == LOCATION_SOURCE_NONE ? "LOCATION NOT SET" : fieldLocationName(buddy, usedLocation);
   if (weatherValid) {
     char text[16]; formatBuddyTemperature(temperatureMilliC, text, sizeof(text), false);
     int temperatureWidth = strlen(text) * 12;
-    int locationWidth = strlen(location) * 6;
+    int locationWidth = strlen(location) * 6 + 11;
     int x = (TFT_WIDTH - temperatureWidth - 12 - locationWidth) / 2;
     display.setTextColor(ink); display.setTextSize(2);
     display.setCursor(x, 188); display.print(text);
     display.setTextColor(ink); display.setTextSize(1);
-    display.setCursor(x + temperatureWidth + 12, 192); display.print(location);
+    drawLocationSourceIcon(display, x + temperatureWidth + 12, 192, source, ink);
+    display.setCursor(x + temperatureWidth + 23, 192); display.print(location);
   } else {
     display.setTextColor(ink); centeredText(188, location, 1);
+    drawLocationSourceIcon(display, (TFT_WIDTH - strlen(location)*6)/2 - 11, 188, source, ink);
   }
   display.setTextColor(ink);
   centeredText(216, weatherValid ? weatherName() : "HELLO", 2);
@@ -667,5 +671,12 @@ void drawTimerDone(uint32_t frame) {
   petAt(72, 62 - (celebrate && frame % 2 == 0 ? 3 : 0), sleeping, false);
   if (celebrate) { display.beginPet(168, 78); drawHeart(0, 0); display.endPet(); }
   centeredText(217, "C: HOME", 2);
+  display.display();
+}
+
+void drawLocationAcquisitionStatus(const char *text, unsigned remaining) {
+  display.clearDisplay(); display.setTextColor(COLOR_TEXT);
+  centeredText(88, text, 2);
+  if (remaining) { char value[20]; snprintf(value,sizeof(value),"%u s remaining",remaining); centeredText(126,value,1); }
   display.display();
 }

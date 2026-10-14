@@ -1,7 +1,12 @@
 #include "weather.h"
+#include "journal.h"
 #include <math.h>
 #include <esp_attr.h>
 
+ObservationLocation currentWeatherLocation;
+RTC_DATA_ATTR uint8_t cachedObservationId = UNKNOWN_LOCATION;
+RTC_DATA_ATTR uint8_t cachedActiveSite = UNKNOWN_LOCATION;
+RTC_DATA_ATTR int32_t cachedSiteLatitude = 0, cachedSiteLongitude = 0;
 RTC_DATA_ATTR int32_t cachedLatitudeMicrodegrees = 0;
 RTC_DATA_ATTR int32_t cachedLongitudeMicrodegrees = 0;
 RTC_DATA_ATTR bool cacheLocationKnown = false;
@@ -22,7 +27,7 @@ RTC_DATA_ATTR time_t lastOnlineSync = 0;
 
 void invalidateWeatherLocation() {
   cachedWeatherValid = cachedSunTimesValid = weatherValid = sunTimesValid = false;
-  cacheLocationKnown = false; lastOnlineSync = 0;
+  cacheLocationKnown = false; lastOnlineSync = 0; currentWeatherLocation = {};
   weatherState = WEATHER_UNKNOWN;
   Serial.println("Location changed; weather/sun cache stale. Next normal sync uses saved coordinates.");
 }
@@ -32,8 +37,12 @@ void saveCachedData() {
     return;
   }
 
-  cachedLatitudeMicrodegrees = lround(configuredLatitude() * 1000000);
-  cachedLongitudeMicrodegrees = lround(configuredLongitude() * 1000000);
+  cachedObservationId = currentWeatherLocation.id;
+  cachedActiveSite = getBuddySave().activeLocation;
+  cachedSiteLatitude = lround(configuredLatitude() * 1000000);
+  cachedSiteLongitude = lround(configuredLongitude() * 1000000);
+  cachedLatitudeMicrodegrees = lround(currentWeatherLocation.latitude * 1000000);
+  cachedLongitudeMicrodegrees = lround(currentWeatherLocation.longitude * 1000000);
   cacheLocationKnown = true;
   cachedWeatherValid =
     true;
@@ -70,8 +79,9 @@ void saveCachedData() {
 
 void restoreCachedData() {
   if (cachedWeatherValid && (!cacheLocationKnown ||
-      cachedLatitudeMicrodegrees != lround(configuredLatitude() * 1000000) ||
-      cachedLongitudeMicrodegrees != lround(configuredLongitude() * 1000000))) {
+      cachedActiveSite != getBuddySave().activeLocation ||
+      cachedSiteLatitude != lround(configuredLatitude() * 1000000) ||
+      cachedSiteLongitude != lround(configuredLongitude() * 1000000))) {
     invalidateWeatherLocation();
   }
 
@@ -79,6 +89,7 @@ void restoreCachedData() {
     return;
   }
 
+  currentWeatherLocation = {cachedLatitudeMicrodegrees / 1000000.0, cachedLongitudeMicrodegrees / 1000000.0, cachedObservationId, locationSource(cachedObservationId)};
   temperatureMilliC = cachedTemperatureMilliC;
   temperatureF =
     cachedTemperatureF;

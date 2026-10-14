@@ -19,7 +19,7 @@ constexpr uint32_t TFT_SPI_HZ = 40000000;
 // reverting to the original D7-controlled CS wiring.
 // ESP32 SPI_MODE3 = 3; keep SPI library types out of the shared pin header.
 constexpr uint8_t TFT_SPI_MODE = 3;
-// D7 is free for future GNSS. D4 remains the TFT reset output.
+// D7 is GNSS UART RX (GPIO44), receiving M100 TX at 115200 baud. D4 remains the TFT reset output.
 // D5 is reserved for the future Hall sensor. Do not initialize it or SPI MISO.
 
 #endif

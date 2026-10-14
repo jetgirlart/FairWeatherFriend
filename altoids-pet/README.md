@@ -23,7 +23,7 @@ The display target is a **Seeed Studio XIAO ESP32-S3** with a **1.54-inch
 | TFT RES/reset | D4 | 5 | RES; dedicated hardware reset |
 | Future Hall sensor | D5 | 6 | Reserved, unused |
 | TFT DC | D6 | 43 | DC |
-| Future GNSS | D7 | 44 | Free; no TFT chip-select GPIO |
+| M100 GNSS RX | D7 | 44 | M100 TX; UART 1, 115200 baud |
 | TFT SCL/clock | D8 | 7 | SCL (SPI SCK) |
 | TFT BLK/backlight | D9 | 8 | BLK, active HIGH control |
 | TFT SDA/data | D10 | 9 | SDA (SPI MOSI) |
@@ -43,7 +43,7 @@ Display pins/dimensions/rotation/SPI speed live in `firmware/altoids_pet/hardwar
 ### TFT wiring with grounded CS and reset on D4
 
 The firmware passes `TFT_CS = -1` and `TFT_RST = D4` to the installed Adafruit
-ST7789 driver. D7/GPIO44 is free for future GNSS; D4/GPIO5 remains dedicated TFT
+ST7789 driver. D7/GPIO44 receives M100 GNSS TX; D4/GPIO5 remains dedicated TFT
 reset, D5/GPIO6 remains reserved for Hall sensing, and D9/GPIO8 remains the
 held-LOW sleep backlight control.
 
@@ -453,7 +453,7 @@ dates or unlock rules. Humidity remains percent in both modes.
 The focus/timer screens currently have no temperature display.
 
 LOCATION displays six-decimal latitude/longitude and whether they come from
-config or NVS. There is no keyboard/GPS. Send `SET_LOCATION <latitude> <longitude>`
+config or NVS. There is no on-device keyboard; live sessions can use GNSS as described below. Send `SET_LOCATION <latitude> <longitude>`
 at 115200 baud with a newline or carriage return. Finite latitude [-90,90] and longitude [-180,180]
 are required; trailing garbage, missing values and failed NVS writes leave the
 old location/cache intact. Coordinates persist as integer microdegrees. A
@@ -1189,7 +1189,7 @@ Hardware checks after your own upload, with flash erase disabled:
 Eight deliberate owner-configured sites occupy stable slots 0–7. Each stores a
 fixed 16-byte name buffer (1–15 printable ASCII characters, no surrounding spaces),
 signed latitude/longitude in millionths of a degree, and occupied/visited flags.
-Names with spaces are supported. No GPS, geolocation service, automatic location
+Names with spaces are supported. Saved-site management does not use geolocation services or automatic location
 tracking or unlimited observation history is used.
 
 SETTINGS → LOCATION lists the saved names, highlights the current selection and
@@ -1946,3 +1946,83 @@ On hardware, compare clear/cloudy/rain/night readability, preview all five fur
 palettes, and check original gear colors individually. Confirm that the golden
 raincoat and orange fur read as warm colors, and the location/weather text remain
 legible against grass. The SPI driver, pins and pixel transfer path are unchanged.
+
+## GNSS live-observation location (save version 11)
+
+Main-board wiring matches the successful spare-board test: HGLRC M100 Mini VCC
+→ 3V3, GND → GND, TX → D7 (GPIO44), module RX unconnected. Hardware UART 1 uses
+115200 baud with no TX pin. TFT CS remains grounded, RESET remains D4, and all
+other pins are unchanged. The module stays powered from 3V3; ending UART reception
+is not GNSS power-off. No standby commands or IP/geolocation service are used.
+
+Only a due live session calls `beginObservationLocation()`: cold boot always
+tries a live session; B wake uses the existing weather cache/staleness policy.
+A cached wake does not initialize UART or wait for GNSS. The GNSS module steps
+non-blockingly using millis and a fixed sentence buffer. The existing startup
+sync coordinator polls those steps with yield for at most 20 seconds, followed
+by 600 ms of result feedback. As with the existing startup Wi-Fi/NTP path,
+normal HOME controls are available after setup completes; no new background
+acquisition or continuous tracking runs in loop.
+
+Acquisition shows GETTING LOCATION with remaining seconds, then LOCATION FOUND,
+USING SAVED SITE, or LOCATION NOT SET. Valid coordinates, nonzero coordinate pair,
+quality 1/2/4/5, ≥4 used satellites and positive HDOP ≤3.0 are required, with named
+thresholds in `gnss.h`. `gnss_nmea.h` reuses the fixed-size, checksum-valid GGA
+parser exercised by the standalone sketch. No additional Arduino library is
+required. Optional altitude is not a fix requirement or saved configuration.
+
+A successful fix chooses a temporary GNSS observation location. Otherwise the
+active saved Field Site is used only if its coordinates are valid and not (0,0).
+No valid fallback means LOCATION NOT SET, no weather/NWS request, and no new
+observation. Once chosen, exactly the same coordinates are used for Open-Meteo
+and NWS. The existing observation acceptance guard still determines whether NWS
+is queried and progress recorded. No alerts are polled independently.
+
+Location-reference semantics are now saved sites 0–7, temporary GNSS **254**, and
+unknown **255**. Version 11 adds no payload bytes or history coordinates: a note
+or record stores its existing compact location reference, and 254 unambiguously
+means GNSS regardless of slot deletion/reuse. Permanent GNSS observations are
+labeled GNSS, without claiming a city or storing exact past positions. They do
+not mark saved sites visited or change active-site coordinates/names. Exact
+chosen current coordinates/source live in runtime/RTC cache metadata only.
+
+All supported older binary and JSON saves, including version 10, migrate to 11
+with progress retained; old checksums are verified before migration. Unknown
+newer/unsupported saves remain protected. Version 11 JSON carries GNSS source via
+location ID 254 in latest/record/Field Note metadata; the existing Python backup
+utility preserves it without a protocol change. Cached weather retains its
+observation's source/coordinates and separately remembers its configured-site
+baseline so a GNSS cache is not mistaken for a site-coordinate mismatch.
+
+HOME shows a tiny transparent dish/pin/? next to the location label. Latest
+Observation and Field Note pages derive their icon from the stored reference.
+The icon represents coordinates used for weather, never GPS connectivity. Current
+icons are temporary masks; see [the future PNG slots](assets/ui/README.md).
+
+Serial prints only acquisition/result and selected-source diagnostics; no NMEA
+stream. Successful fixes print coordinates, satellite count and HDOP. A failure
+prints the selected fallback name, or no-location/skip. Weather/NWS diagnostics
+otherwise retain their existing behavior.
+
+Before manually uploading to the real board:
+
+1. Verify the M100 wiring and grounded TFT CS; do not attach M100 RX or repurpose
+   other pins. Confirm saved fallback coordinates are correct and not 0,0.
+2. Cold boot outdoors: check LOCATION FOUND, GNSS FIX OK, and Location source:
+   GNSS. HOME and Latest/Field Note should show GNSS plus the dish icon.
+3. Verify both request locations match the acquired coordinates, all pet/gear/UI
+   behavior remains intact, and saved Field Sites retain their names/coordinates.
+   GNSS observations must not increase FIELD SITES VISITED.
+4. Sleep and B-wake within the cache interval: expect cached weather, Wi-Fi off,
+   preserved GNSS indicator, and **no GNSS: acquiring** message or 20-second wait.
+5. On a due live session without a fix, expect ≤20 seconds plus brief feedback,
+   USING SAVED SITE, named FIELD SITE diagnostics, pin icon, and normal weather
+   collected at that site's coordinates. A module missing/no-data case must work.
+6. Test no-fix with a saved fallback at 0,0: expect LOCATION NOT SET and ? icon,
+   with no weather/NWS observation or progress change. Restore the valid site via
+   USB afterward. No special debug commands/menu are introduced.
+7. Verify NVS/cold boot and Export/Import retain GNSS note/record labels. Delete
+   and reuse a saved slot: past GNSS records must still say GNSS.
+8. Check existing 30-second inactivity sleep, B wake, focus timer/sound, Journal,
+   Records, gear and fur palettes. GNSS remains powered during device sleep for
+   this integration; power optimization is a separate task.

@@ -1,6 +1,7 @@
 #include "field_events.h"
 #include "field_locations.h"
 #include "weather.h"
+#include "gnss.h"
 #include "journal.h"
 #include "weather_observation.h"
 #include "measurement_units.h"
@@ -317,6 +318,8 @@ double configuredLongitude() {
 // ==================================================
 
 bool fetchWeather() {
+  const ObservationLocation location = liveObservationLocation();
+  if (location.source == LOCATION_SOURCE_NONE) { Serial.println("LOCATION NOT SET; live observation skipped."); return false; }
 
   Serial.println(
     "Fetching weather..."
@@ -332,9 +335,9 @@ bool fetchWeather() {
   String url =
     "https://api.open-meteo.com/v1/forecast"
     "?latitude=" +
-    String(configuredLatitude(), 6) +
+    String(location.latitude, 6) +
     "&longitude=" +
-    String(configuredLongitude(), 6) +
+    String(location.longitude, 6) +
     "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,surface_pressure,precipitation,weather_code"
     "&daily=sunrise,sunset"
     "&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm"
@@ -406,7 +409,8 @@ bool fetchWeather() {
     Serial.println("Live weather rejected: invalid required temperature/code.");
     return false;
   }
-  observation.location = getBuddySave().activeLocation;
+  observation.location = location.id;
+  currentWeatherLocation = location;
   weatherCode = observation.weatherCode;
   temperatureMilliC = observation.temperatureMilliC;
   temperatureF = round(observation.temperatureMilliC * 9.0 / 5000.0 + 32);
@@ -468,7 +472,7 @@ bool fetchWeather() {
   if (timeValid) {
     if (recordWeatherObservation(observation)) {
       doc.clear(); payload = String(); // Release normal response before supplemental fetch.
-      checkLiveFieldEvents(configuredLatitude(), configuredLongitude(), observation.timestamp);
+      checkLiveFieldEvents(location.latitude, location.longitude, observation.timestamp);
     }
   }
   else Serial.println("Live observation skipped: invalid clock.");
@@ -481,6 +485,14 @@ bool fetchWeather() {
 // ==================================================
 
 bool syncOnlineData() {
+  // Only a due live session enters here. Cached wakes never touch the UART.
+  beginObservationLocation();
+  while (!updateObservationLocation()) yield();
+  if (liveObservationLocation().source == LOCATION_SOURCE_NONE) {
+    weatherValid = sunTimesValid = cachedWeatherValid = false; currentWeatherLocation = {}; return false;
+  }
+  drawLocationAcquisitionStatus("GETTING WEATHER...", 0);
+
 
   Serial.println();
 

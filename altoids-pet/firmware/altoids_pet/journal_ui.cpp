@@ -5,6 +5,7 @@
 #include "pet.h"
 #include "field_notes.h"
 #include "field_locations.h"
+#include "location_icon.h"
 #include "gear.h"
 #include "gear_variants.h"
 #include "units.h"
@@ -49,6 +50,12 @@ void centered(int y, const char *text, uint8_t size = 1) {
   display.setTextSize(size * 2);
   display.setCursor((TFT_WIDTH - int(strlen(text) * 12 * size)) / 2, y * 2);
   display.print(text);
+}
+void locationRow(int y, const BuddySaveData &data, uint8_t id) {
+  const char *name = fieldLocationName(data,id);
+  int width = strlen(name)*12+11, x = (TFT_WIDTH-width)/2;
+  drawLocationSourceIcon(display,x,y*2+4,locationSource(id),COLOR_TEXT);
+  display.setTextSize(2); display.setCursor(x+11,y*2); display.print(name);
 }
 void beginScreen(const char *title) {
   display.clearDisplay(); // RAM only; one TFT update at finishScreen().
@@ -118,7 +125,7 @@ void drawFieldNotes() {
   if (notePage == 0) {
     time_t epoch = note.timestamp; struct tm local = {};
     localtime_r(&epoch, &local); strftime(text, sizeof(text), "%b %d %I:%M %p", &local); centered(34, text);
-    centered(44, fieldLocationName(data, note.location));
+    locationRow(44, data, note.location);
     centered(55, categoryLabels[uint8_t(note.category)]);
     formatTemperature(note.temperatureMilliC, text, sizeof(text)); centered(66, text, 2);
     noteMetric(note, MetricId::WIND, "WIND", 85); noteMetric(note, MetricId::HUMIDITY, "HUM", 97);
@@ -205,7 +212,7 @@ void drawJournal() {
           formatTemperature(data.latestTemperatureMilliC, text, sizeof(text)); centered(51, text, 2);
           latestMetricRow(data, MetricId::HUMIDITY, "HUM", 75);
           latestMetricRow(data, MetricId::PRECIPITATION, "PRECIP", 88);
-          centered(99, fieldLocationName(data, data.latestLocation));
+          locationRow(99, data, data.latestLocation);
         } else {
           latestMetricRow(data, MetricId::WIND, "WIND", 39);
           latestMetricRow(data, MetricId::GUST, "GUST", 57);

@@ -3,6 +3,8 @@
 #define FWF_NETWORK_TEST
 #include "../journal/test_journal.cpp"
 #include "../../firmware/altoids_pet/weather_observation.cpp"
+#include "../../firmware/altoids_pet/gnss.cpp"
+void drawLocationAcquisitionStatus(const char*,unsigned){}
 #include "../../firmware/altoids_pet/weather.cpp"
 #include "../../firmware/altoids_pet/weather_cache.cpp"
 #include "../../firmware/altoids_pet/field_events.cpp"
@@ -10,7 +12,8 @@
 const char *weatherReply=R"({"current":{"temperature_2m":20,"weather_code":0},"daily":{"sunrise":["2027-01-15T07:00"],"sunset":["2027-01-15T18:00"]}})";
 const char *pointReply=R"({"properties":{"forecastZone":"https://api.weather.gov/zones/forecast/TXZ001"}})";
 const char *alertReply=R"({"features":[{"properties":{"id":"urn:nws:1","event":"Tornado Warning","description":"NOT STORED"}}]})";
-void prepare(){blank();assert(saveBuddyLocation(32,-95));httpUrls.clear();httpHeaders.clear();httpReplies.clear();}
+void prepare(){blank();assert(saveBuddyLocation(32,-95));httpUrls.clear();httpHeaders.clear();httpReplies.clear();locationReady=false;}
+#ifndef FWF_GNSS_INTEGRATION_TEST
 int main(){
  setenv("TZ","CST6CDT,M3.2.0/2,M11.1.0/2",1);tzset();
  prepare();httpReplies={{200,weatherReply},{200,pointReply},{200,alertReply}};
@@ -52,3 +55,5 @@ int main(){
  prepare();httpReplies={{500,"fail"}};assert(!fetchWeather() && httpUrls.size()==1 && getBuddySave().fieldNoteCount==0);
  puts("PASS: actual weather/NWS clients: correct endpoint/headers, supplemental failures, non-US skip, 100 cached wakes without NWS, rejected/failed observations without NWS.");
 }
+
+#endif

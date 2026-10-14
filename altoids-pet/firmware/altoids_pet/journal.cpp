@@ -227,7 +227,7 @@ bool recordWeatherObservation(const WeatherObservation &observation) {
   if (date != next.lastObservedDate) ++next.uniqueDaysObserved;
   next.lastObservedDate = date;
   next.latestObservationAt = observation.timestamp;
-  next.latestLocation = locationExists(next, observation.location) ? observation.location : next.activeLocation;
+  next.latestLocation = observation.location == GNSS_LOCATION ? GNSS_LOCATION : locationExists(next, observation.location) ? observation.location : next.activeLocation;
   if (locationExists(next, next.latestLocation) && !next.locations[next.latestLocation].visited) {
     next.locations[next.latestLocation].visited = true;
     if (next.fieldSitesVisited < UINT64_MAX) ++next.fieldSitesVisited;

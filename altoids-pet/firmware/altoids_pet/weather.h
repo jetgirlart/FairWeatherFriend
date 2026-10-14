@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <time.h>
+#include "field_locations.h"
+extern ObservationLocation currentWeatherLocation;
 
 enum WeatherState {
   WEATHER_UNKNOWN,
